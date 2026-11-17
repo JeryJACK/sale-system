@@ -29,6 +29,13 @@
 .menu-item { position:relative; }
 .menu-item::before { content:''; width:6px; height:6px; background:#7b8a99; border-radius:2px; display:inline-block; margin-right:9px; flex-shrink:0; }
 .menu-item.side-item-active::before { background:#fff; }
+/* 左侧菜单自动折叠：收起后保留一条窄边，鼠标移到左侧自动展开 */
+#sideMenu { width:13rem; transition:width .28s cubic-bezier(.4,0,.2,1); }
+#sideMenu .side-menu-content { width:13rem; }
+#sideMenu.is-collapsed { width:6px; overflow:hidden; }
+#sideMenu.is-collapsed:hover { width:13rem; overflow-y:auto; }
+#sideMenu.is-collapsed::after { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:#2488c8; }
+#sideMenu { position:relative; }
 @media print {
   .no-print { display:none !important; }
 }
@@ -143,8 +150,8 @@
 
 <div class="flex flex-1 overflow-hidden">
   <!-- 左侧菜单 -->
-  <aside class="w-52 bg-sideBg text-gray-200 overflow-y-auto scrollbar-thin shrink-0 no-print">
-    <div class="py-2">
+  <aside id="sideMenu" class="w-52 bg-sideBg text-gray-200 overflow-y-auto scrollbar-thin shrink-0 no-print">
+    <div class="py-2 side-menu-content">
       <div class="px-4 py-2 text-gray-400 text-sm">首页</div>
       <div class="menu-item px-4 py-2 hover:bg-gray-700 cursor-pointer flex items-center gap-2" data-page="home">
         首页
@@ -1155,6 +1162,6 @@
 
 <script src="./assets/echarts.min.js"></script>
 <script src="./config.js"></script>
-<script src="./app.js?v=20261117n"></script>
+<script src="./app.js?v=20261117u"></script>
 </body>
 </html>

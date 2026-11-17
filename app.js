@@ -97,6 +97,7 @@ function showApp() {
   }
   const shell = $('appShell');
   if (shell) { shell.classList.remove('hidden'); shell.classList.add('flex'); }
+  initSideMenuAutoCollapse();
 }
 
 function handleAuthExpired() {
@@ -284,8 +285,67 @@ function bindMenuClick() {
       const page = this.dataset.page;
       if (page === 'sale' && editingOrderId) exitOrderEdit();
       switchPage(page);
+      scheduleSideMenuCollapse();
     });
   });
+}
+
+/* ==================== 左侧菜单自动折叠 ==================== */
+let sideMenuTimer = null;
+let sideMenuBound = false;
+let sideMenuHovered = false;
+
+function expandSideMenu() {
+  const menu = $('sideMenu');
+  if (!menu) return;
+  if (sideMenuTimer) {
+    clearTimeout(sideMenuTimer);
+    sideMenuTimer = null;
+  }
+  menu.classList.remove('is-collapsed');
+}
+
+function collapseSideMenu() {
+  const menu = $('sideMenu');
+  if (!menu) return;
+  sideMenuTimer = null;
+  if (sideMenuHovered || menu.matches(':hover')) return;
+  menu.classList.add('is-collapsed');
+}
+
+function scheduleSideMenuCollapse() {
+  const menu = $('sideMenu');
+  if (!menu || menu.classList.contains('is-collapsed') || sideMenuTimer) return;
+  sideMenuTimer = setTimeout(collapseSideMenu, 2000);
+}
+
+function initSideMenuAutoCollapse() {
+  const menu = $('sideMenu');
+  if (!menu) return;
+  if (!sideMenuBound) {
+    sideMenuBound = true;
+    menu.addEventListener('mouseenter', function () {
+      sideMenuHovered = true;
+      expandSideMenu();
+    });
+    menu.addEventListener('mouseleave', function () {
+      sideMenuHovered = false;
+      scheduleSideMenuCollapse();
+    });
+    menu.addEventListener('click', function () {
+      if (menu.classList.contains('is-collapsed')) expandSideMenu();
+    });
+    document.addEventListener('mousemove', function (e) {
+      const rect = menu.getBoundingClientRect();
+      // 鼠标贴到屏幕左边缘，或已经进入展开后的菜单，立即展开
+      if (e.clientX <= 10 || (rect.width > 20 && e.clientX >= rect.left && e.clientX <= rect.right)) {
+        expandSideMenu();
+      } else if (!menu.classList.contains('is-collapsed') && e.clientX > rect.right + 10) {
+        scheduleSideMenuCollapse();
+      }
+    });
+  }
+  scheduleSideMenuCollapse();
 }
 
 function switchPage(pageName) {
