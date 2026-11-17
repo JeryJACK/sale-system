@@ -746,6 +746,38 @@ function historyOptions(row) {
   }).join('');
 }
 
+function customerUnitPriceData(row, unitName) {
+  const entry = row && row.goods_id ? priceMap[row.goods_id] : null;
+  if (!entry) return null;
+  const unitPrices = entry.unit_prices || {};
+  return unitPrices[unitName] || null;
+}
+
+function historyForUnit(row, unitName) {
+  const unitData = customerUnitPriceData(row, unitName);
+  if (unitData && unitData.history) return unitData.history;
+  const entry = row && row.goods_id ? priceMap[row.goods_id] : null;
+  const baseUnit = row.baseUnit || ((row.units || []).find(function (u) { return u.is_base; }) || {}).unit || '';
+  if (entry && unitName === baseUnit) return entry.history || [];
+  return [];
+}
+
+/* 销售单位价：优先客户在这个单位上记过的价格，其次商品单位参考价；进货仍用 unitPrice */
+function saleUnitPrice(row, unitName) {
+  const entry = row && row.goods_id ? priceMap[row.goods_id] : null;
+  if (entry) {
+    const unitData = customerUnitPriceData(row, unitName);
+    if (unitData && unitData.price !== null && unitData.price !== undefined) return Number(unitData.price);
+    const baseUnit = row.baseUnit || ((row.units || []).find(function (u) { return u.is_base; }) || {}).unit || '';
+    if (unitName === baseUnit && entry.price !== null && entry.price !== undefined) return Number(entry.price);
+    if (entry.price !== null && entry.price !== undefined) {
+      const unit = (row.units || []).find(function (u) { return u.unit === unitName; });
+      return Math.round(Number(entry.price) * Number((unit && unit.factor) || 1) * 10000) / 10000;
+    }
+  }
+  return unitPrice(row, unitName);
+}
+
 function unitSelectHtml(row, index, dis) {
   const units = row.units || [];
   if (!units.length) {
@@ -1054,7 +1086,8 @@ async function onUnitCommit(index, value) {
   const row = sellRows[index];
   if (!row) return;
   row.unit = String(value || '').trim();
-  row.price = unitPrice(row, row.unit);
+  row.history = historyForUnit(row, row.unit);
+  row.price = saleUnitPrice(row, row.unit);
   row.unitChanged = true;
   updatePriceCell(index);
   calcRowAmount(index);
@@ -1337,24 +1370,21 @@ function applySpecToRow(index, item) {
   row.stock_id = null;
   row.makeDate = '';
   row.expDate = '';
-  row.history = item.history || [];
   const hasCustomerPrice = item.price !== null && item.price !== undefined;
-  const base = row.units.find(function (u) { return u.is_base; });
-  const basePrice = hasCustomerPrice ? item.price : (row.defaultPrice !== null && row.defaultPrice !== undefined ? row.defaultPrice : (base ? base.price : ''));
-  const activeUnit = row.units.find(function (u) { return u.unit === row.unit; });
-  row.price = activeUnit && activeUnit.price !== null && activeUnit.price !== undefined
-    ? activeUnit.price
-    : (basePrice === '' || basePrice === null || basePrice === undefined ? '' : Math.round(Number(basePrice) * Number((activeUnit && activeUnit.factor) || 1) * 10000) / 10000);
-  row.priceAuto = row.price !== '' && row.price !== null && row.price !== undefined;
-  row.unitChanged = false;
   if (currentCustomer && row.goods_id) {
-    priceMap[row.goods_id] = {
+    const existing = priceMap[row.goods_id] || {};
+    priceMap[row.goods_id] = Object.assign({}, existing, {
       goods_id: row.goods_id,
-      price: hasCustomerPrice ? item.price : null,
-      history: row.history,
-      order_count: item.order_count || 0
-    };
+      price: hasCustomerPrice ? item.price : (existing.price !== undefined ? existing.price : null),
+      history: item.history || existing.history || [],
+      order_count: item.order_count || existing.order_count || 0
+    });
   }
+  row.history = historyForUnit(row, row.unit);
+  const nextPrice = saleUnitPrice(row, row.unit);
+  row.price = nextPrice === null || nextPrice === undefined ? '' : nextPrice;
+  row.priceAuto = row.price !== '';
+  row.unitChanged = false;
   renderSellTable();
   calcRowAmount(index);
   if (stockConfig.mode === 'batch') {
@@ -1468,17 +1498,30 @@ async function onPriceCommit(index) {
     return;
   }
   try {
-    const entry = priceMap[row.goods_id];
-    if (!(entry && entry.price !== null && entry.price !== undefined && entry.unit === row.unit &&
-        Math.abs(Number(entry.price) - price) < 0.005)) {
+    const unitData = customerUnitPriceData(row, row.unit);
+    const remembered = unitData && unitData.price !== null && unitData.price !== undefined
+      ? Math.abs(Number(unitData.price) - price) < 0.005
+      : (row.unit === row.baseUnit && priceMap[row.goods_id] && priceMap[row.goods_id].price !== null &&
+         priceMap[row.goods_id].price !== undefined && Math.abs(Number(priceMap[row.goods_id].price) - price) < 0.005);
+    if (!remembered) {
       const saved = await api('/prices', {
         method: 'PUT',
         body: { user_id: currentCustomer.id, goods_id: row.goods_id, price: price, unit: row.unit }
       });
+      const entry = priceMap[row.goods_id] || { goods_id: row.goods_id, price: null, history: [] };
+      entry.unit_prices = entry.unit_prices || {};
+      entry.unit_prices[row.unit] = {
+        price: Number(saved.price !== null && saved.price !== undefined ? saved.price : price),
+        history: saved.history || [],
+        order_count: saved.order_count || 0,
+        last_used_at: saved.last_used_at || null
+      };
       if (row.unit === row.baseUnit || !row.baseUnit) {
-        priceMap[row.goods_id] = saved;
-        updateSpecCachePrice(row.pname, row.goods_id, saved.price, saved.history);
+        entry.price = Number(saved.price !== null && saved.price !== undefined ? saved.price : price);
+        entry.history = saved.history || [];
+        updateSpecCachePrice(row.pname, row.goods_id, entry.price, entry.history);
       }
+      priceMap[row.goods_id] = entry;
       row.history = saved.history || [];
       updatePriceCell(index);
       toast('已记住 ' + currentCustomer.name + ' 的客户价 ￥' + money(price), 'ok');
@@ -1798,18 +1841,11 @@ function applyCustomerPrice(index, overwrite) {
   if (!row) return;
   const goods = row.goods_id ? findGoodsById(row.goods_id) : findGoodsByCode(row.pid);
   if (goods) row.goods_id = goods.id;
-  const entry = goods ? priceMap[goods.id] : null;
 
-  row.history = entry && entry.history ? entry.history : [];
-  let price = null;
-  if (entry && entry.price !== null && entry.price !== undefined) price = entry.price;
-  else if (goods && goods.default_price !== null && goods.default_price !== undefined) price = goods.default_price;
-  const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
-  if (price !== null && unit && Number(unit.factor) > 1) {
-    price = Number(price) * Number(unit.factor);
-  }
-
-  if (price !== null && (overwrite || row.priceAuto || row.price === '' || row.price === null || row.price === undefined)) {
+  row.history = historyForUnit(row, row.unit);
+  const price = saleUnitPrice(row, row.unit);
+  if (price !== '' && price !== null && price !== undefined &&
+      (overwrite || row.priceAuto || row.price === '' || row.price === null || row.price === undefined)) {
     row.price = Math.round(Number(price) * 10000) / 10000;
     row.priceAuto = true;
   }
@@ -1848,26 +1884,17 @@ function applyPricesForCustomer() {
   sellRows.forEach(function (row, index) {
     if (!row.goods_id) return;
     const goods = findGoodsById(row.goods_id);
-    const entry = priceMap[row.goods_id];
     const wasAuto = row.priceAuto || row.price === '' || row.price === null || row.price === undefined;
     row.specFor = '';
     row.specOptions = [];
 
-    row.history = entry && entry.history ? entry.history : [];
-    if (entry && entry.price !== null && entry.price !== undefined) {
-      if (wasAuto) {
-        row.price = priceForUnit(row, entry.price);
-        row.priceAuto = true;
-      }
-      row.defaultPrice = goods ? goods.default_price : null;
-    } else if (wasAuto) {
-      const fallback = goods && goods.default_price !== null && goods.default_price !== undefined
-        ? goods.default_price : '';
-      row.price = fallback === '' ? '' : priceForUnit(row, fallback);
-      row.priceAuto = fallback !== '';
-      row.defaultPrice = goods ? goods.default_price : null;
-    } else {
-      row.defaultPrice = goods ? goods.default_price : null;
+    row.history = historyForUnit(row, row.unit);
+    row.defaultPrice = goods ? goods.default_price : null;
+    if (wasAuto) {
+      const nextPrice = saleUnitPrice(row, row.unit);
+      row.price = nextPrice === null || nextPrice === undefined ? '' : nextPrice;
+      row.priceAuto = row.price !== '';
+      row.history = historyForUnit(row, row.unit);
     }
     updatePriceCell(index);
     calcRowAmount(index);
@@ -2289,9 +2316,12 @@ async function startEditOrder(orderId) {
         makeDate: item.make_date || '',
         expDate: item.exp_date || '',
         remark: item.remark || '',
-        history: (priceMap[item.goods_id] && priceMap[item.goods_id].history) || [],
+        history: [],
         defaultPrice: goods ? goods.default_price : null
       };
+    });
+    sellRows.forEach(function (row) {
+      if (row.goods_id) row.history = historyForUnit(row, row.unit);
     });
     if (!sellRows.length) sellRows = [newRow()];
     renderSellTable();
