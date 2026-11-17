@@ -636,7 +636,7 @@ function findGoodsById(id) {
 /* ==================== 销售明细行 ==================== */
 function newRow() {
   return {
-    goods_id: null, pid: '', pname: '', spec: '', unit: '',
+    goods_id: null, pid: '', pname: '', spec: '', unit: '', units: [], baseUnit: '',
     qty: 1, price: '', priceAuto: false, amount: 0,
     makeDate: '', expDate: '', remark: '', stock_id: null,
     shelfLifeDays: 0, expireManual: false, history: [], defaultPrice: null,
@@ -661,10 +661,14 @@ function delRow(index) {
   renderSellTable();
 }
 
+function rowPriceFactor(row) {
+  return 1;
+}
+
 function historyText(row) {
   const history = row.history || [];
-  if (history.length) return '历史 ' + history.map(function (h) { return money(h.price); }).join(' · ');
-  if (row.defaultPrice !== null && row.defaultPrice !== undefined) return '参考价 ' + money(row.defaultPrice);
+  if (history.length) return '历史 ' + history.map(function (h) { return money(Number(h.price)); }).join(' · ');
+  if (row.defaultPrice !== null && row.defaultPrice !== undefined) return '参考价 ' + money(Number(row.defaultPrice));
   return '';
 }
 
@@ -672,14 +676,38 @@ function historyTitle(row) {
   const history = row.history || [];
   if (!history.length) return '';
   return '最近价格：\n' + history.map(function (h) {
-    return (h.date || '') + '  ￥' + money(h.price) + (h.order_no ? '  单号 ' + h.order_no : '');
+    return (h.date || '') + '  ￥' + money(Number(h.price)) + (h.order_no ? '  单号 ' + h.order_no : '');
   }).join('\n');
 }
 
 function historyOptions(row) {
   return (row.history || []).map(function (h) {
-    return '<option value="' + money(h.price) + '"></option>';
+    return '<option value="' + money(Number(h.price)) + '"></option>';
   }).join('');
+}
+
+function unitSelectHtml(row, index, dis) {
+  const units = row.units || [];
+  if (!units.length) {
+    return '<input class="w-full min-w-[55px] border px-1 py-1 bg-gray-50" list="unitOptions" value="' + esc(row.unit) + '" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>';
+  }
+  return '<select class="w-full min-w-[60px] border px-1 py-1 bg-gray-50" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +
+    units.map(function (u) {
+      return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
+        esc(u.unit) + (Number(u.factor) > 1 ? '（×' + Number(u.factor) + '）' : '') + '</option>';
+    }).join('') + '</select>';
+}
+
+function purchaseUnitSelectHtml(row, index) {
+  const units = row.units || [];
+  if (!units.length) {
+    return '<input class="w-full border px-1 py-1" value="' + esc(row.unit) + '" onchange="purchaseRows[' + index + '].unit=this.value">';
+  }
+  return '<select class="w-full border px-1 py-1" onchange="onPurchaseUnitCommit(' + index + ',this.value)">' +
+    units.map(function (u) {
+      return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
+        esc(u.unit) + (Number(u.factor) > 1 ? '（×' + Number(u.factor) + '）' : '') + '</option>';
+    }).join('') + '</select>';
 }
 
 function renderSellTable() {
@@ -704,7 +732,7 @@ function renderSellTable() {
       '<button type="button" onclick="toggleSpecSuggest(' + index + ')" title="查看/选择规格" class="shrink-0 w-7 text-center text-primaryBlue border rounded"' + dis + '>选</button>' +
       '</div>' +
       '<div class="spec-suggest hidden fixed bg-white border shadow-lg z-50 max-h-56 overflow-auto text-xs"></div></td>' +
-      '<td><input class="w-full min-w-[55px] border px-1 py-1 bg-gray-50" list="unitOptions" value="' + esc(row.unit) + '" placeholder="选/输单位" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '></td>' +
+      '<td>' + unitSelectHtml(row, index, dis) + '</td>' +
       '<td><input type="number" step="0.01" min="0" class="w-full min-w-[65px] border px-1 py-1" value="' + esc(row.qty) + '" placeholder="数量" oninput="updateQty(' + index + ',this.value)"' + dis + '></td>' +
       '<td>' +
       '<input type="number" step="0.01" min="0" class="w-full min-w-[80px] border px-1 py-1" list="priceList_' + index + '" value="' + esc(row.price) + '" placeholder="单价" oninput="updatePrice(' + index + ',this.value)" onchange="onPriceCommit(' + index + ')"' + dis + '>' +
@@ -746,6 +774,10 @@ function onPnameInput(index, value) {
     row.stock_id = null;
     row.spec = '';
     row.unit = '';
+    row.packageQty = 1;
+    row.packageUnit = '';
+    row.saleUnit = '';
+    row.priceUnit = '';
     row.price = '';
     row.priceAuto = false;
     row.specFor = '';
@@ -957,23 +989,37 @@ function updateSpecCacheGoods(name, goodsId, patch) {
   });
 }
 
-/* 单位选择/输入完成：已有商品立即写入 t_goods.unit */
+/* 单位切换：价格按当前单位价自动带出；不再反写商品主档单位 */
 async function onUnitCommit(index, value) {
   const row = sellRows[index];
   if (!row) return;
   row.unit = String(value || '').trim();
-  if (!row.goods_id || isOrderLocked()) return;
-  try {
-    const saved = await api('/goods/' + row.goods_id + '/unit', {
-      method: 'PUT',
-      body: { unit: row.unit }
-    });
-    const goods = findGoodsById(row.goods_id);
-    if (goods) goods.unit = saved.unit || '';
-    updateSpecCacheGoods(row.pname, row.goods_id, { unit: saved.unit || '' });
-  } catch (err) {
-    toast('单位保存失败：' + err.message, 'err');
+  const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
+  if (row.priceAuto || row.unitChanged) {
+    row.price = unitPrice(row, row.unit);
   }
+  row.unitChanged = true;
+  updatePriceCell(index);
+  calcRowAmount(index);
+  renderSellTable();
+}
+
+function priceForUnit(row, basePrice) {
+  if (basePrice === '' || basePrice === null || basePrice === undefined) return '';
+  const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
+  const factor = Number((unit && unit.factor) || 1);
+  return Math.round(Number(basePrice) * factor * 10000) / 10000;
+}
+
+function unitPrice(row, unitName) {
+  const unit = (row.units || []).find(function (u) { return u.unit === unitName; });
+  if (unit && unit.price !== null && unit.price !== undefined) return Number(unit.price);
+  const baseUnit = (row.units || []).find(function (u) { return u.is_base; });
+  const basePrice = baseUnit && baseUnit.price !== null && baseUnit.price !== undefined
+    ? Number(baseUnit.price)
+    : row.defaultPrice;
+  if (basePrice === null || basePrice === undefined || basePrice === '') return '';
+  return Math.round(basePrice * Number((unit && unit.factor) || 1) * 10000) / 10000;
 }
 
 /* 记住价格后同步规格下拉里的客户价显示 */
@@ -1211,7 +1257,9 @@ function applySpecToRow(index, item) {
   row.goods_id = Number(item.goods_id);
   row.pid = item.code || '';
   row.spec = item.spec || '';
-  row.unit = item.unit || '';
+  row.units = item.units || [];
+  row.baseUnit = item.base_unit || item.unit || '';
+  row.unit = item.default_sale_unit || row.baseUnit;
   row.defaultPrice = item.default_price;
   row.shelfLifeDays = Number(item.shelf_life_days || 0);
   row.expireManual = false;
@@ -1220,10 +1268,14 @@ function applySpecToRow(index, item) {
   row.expDate = '';
   row.history = item.history || [];
   const hasCustomerPrice = item.price !== null && item.price !== undefined;
-  row.price = hasCustomerPrice
-    ? item.price
-    : (row.defaultPrice !== null && row.defaultPrice !== undefined ? row.defaultPrice : '');
+  const base = row.units.find(function (u) { return u.is_base; });
+  const basePrice = hasCustomerPrice ? item.price : (row.defaultPrice !== null && row.defaultPrice !== undefined ? row.defaultPrice : (base ? base.price : ''));
+  const activeUnit = row.units.find(function (u) { return u.unit === row.unit; });
+  row.price = activeUnit && activeUnit.price !== null && activeUnit.price !== undefined
+    ? activeUnit.price
+    : (basePrice === '' || basePrice === null || basePrice === undefined ? '' : Math.round(Number(basePrice) * Number((activeUnit && activeUnit.factor) || 1) * 10000) / 10000);
   row.priceAuto = row.price !== '' && row.price !== null && row.price !== undefined;
+  row.unitChanged = false;
   if (currentCustomer && row.goods_id) {
     priceMap[row.goods_id] = {
       goods_id: row.goods_id,
@@ -1294,7 +1346,11 @@ async function createSpec(index, specText) {
       code: goods.code,
       name: goods.name,
       spec: goods.spec,
-      unit: goods.unit,
+      unit: data.unit || goods.unit,
+      base_unit: goods.base_unit,
+      units: goods.units || [],
+      default_sale_unit: goods.default_sale_unit,
+      default_purchase_unit: goods.default_purchase_unit,
       shelf_life_days: goods.shelf_life_days,
       default_price: goods.default_price,
       price: priceInfo ? priceInfo.price : null,
@@ -1309,11 +1365,14 @@ async function createSpec(index, specText) {
 
 /* 单价输入完成：选了客户写入客户价记忆；未选客户写入商品参考价 */
 async function saveReferencePrice(row, price) {
+  const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
+  const factor = Number((unit && unit.factor) || 1);
+  const normalized = factor > 1 ? Math.round(Number(price) / factor * 10000) / 10000 : price;
   if (row.defaultPrice !== null && row.defaultPrice !== undefined &&
-      Math.abs(Number(row.defaultPrice) - price) < 0.005) return;
+      Math.abs(Number(row.defaultPrice) - normalized) < 0.005) return;
   const saved = await api('/goods/' + row.goods_id + '/default-price', {
     method: 'PUT',
-    body: { default_price: price }
+    body: { default_price: normalized }
   });
   row.defaultPrice = saved.default_price;
   const goods = findGoodsById(row.goods_id);
@@ -1338,15 +1397,17 @@ async function onPriceCommit(index) {
   }
   try {
     const entry = priceMap[row.goods_id];
-    if (!(entry && entry.price !== null && entry.price !== undefined &&
+    if (!(entry && entry.price !== null && entry.price !== undefined && entry.unit === row.unit &&
         Math.abs(Number(entry.price) - price) < 0.005)) {
       const saved = await api('/prices', {
         method: 'PUT',
-        body: { user_id: currentCustomer.id, goods_id: row.goods_id, price: price }
+        body: { user_id: currentCustomer.id, goods_id: row.goods_id, price: price, unit: row.unit }
       });
-      priceMap[row.goods_id] = saved;
+      if (row.unit === row.baseUnit || !row.baseUnit) {
+        priceMap[row.goods_id] = saved;
+        updateSpecCachePrice(row.pname, row.goods_id, saved.price, saved.history);
+      }
       row.history = saved.history || [];
-      updateSpecCachePrice(row.pname, row.goods_id, saved.price, saved.history);
       updatePriceCell(index);
       toast('已记住 ' + currentCustomer.name + ' 的客户价 ￥' + money(price), 'ok');
     }
@@ -1471,7 +1532,9 @@ function applyGoodsToRow(index, goods, opts) {
   row.goods_id = goods.id;
   row.pname = goods.name;
   row.spec = goods.spec || '';
-  row.unit = goods.unit || '';
+  row.units = goods.units || [];
+  row.baseUnit = goods.base_unit || goods.unit || '';
+  row.unit = goods.default_sale_unit || row.baseUnit;
   row.defaultPrice = goods.default_price;
   row.shelfLifeDays = Number(goods.shelf_life_days || 0);
   row.expireManual = false;
@@ -1604,6 +1667,7 @@ function updatePrice(index, value) {
   const row = sellRows[index];
   if (!row) return;
   row.price = value;
+  row.priceUnit = row.unit;
   row.priceAuto = false;
   calcRowAmount(index);
 }
@@ -1652,6 +1716,10 @@ function onPidChange(index) {
   calcRowAmount(index);
 }
 
+function priceBySaleUnit(price, row) {
+  return price;
+}
+
 function applyCustomerPrice(index, overwrite) {
   const row = sellRows[index];
   if (!row) return;
@@ -1663,9 +1731,13 @@ function applyCustomerPrice(index, overwrite) {
   let price = null;
   if (entry && entry.price !== null && entry.price !== undefined) price = entry.price;
   else if (goods && goods.default_price !== null && goods.default_price !== undefined) price = goods.default_price;
+  const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
+  if (price !== null && unit && Number(unit.factor) > 1) {
+    price = Number(price) * Number(unit.factor);
+  }
 
   if (price !== null && (overwrite || row.priceAuto || row.price === '' || row.price === null || row.price === undefined)) {
-    row.price = price;
+    row.price = Math.round(Number(price) * 10000) / 10000;
     row.priceAuto = true;
   }
 }
@@ -1711,14 +1783,14 @@ function applyPricesForCustomer() {
     row.history = entry && entry.history ? entry.history : [];
     if (entry && entry.price !== null && entry.price !== undefined) {
       if (wasAuto) {
-        row.price = entry.price;
+        row.price = priceForUnit(row, entry.price);
         row.priceAuto = true;
       }
       row.defaultPrice = goods ? goods.default_price : null;
     } else if (wasAuto) {
       const fallback = goods && goods.default_price !== null && goods.default_price !== undefined
         ? goods.default_price : '';
-      row.price = fallback;
+      row.price = fallback === '' ? '' : priceForUnit(row, fallback);
       row.priceAuto = fallback !== '';
       row.defaultPrice = goods ? goods.default_price : null;
     } else {
@@ -1806,6 +1878,27 @@ async function refreshGoods() {
   renderGoodsManage();
 }
 
+function unitsText(goods) {
+  const units = goods.units || [];
+  if (!units.length) return goods.unit || '-';
+  return units.map(function (u) {
+    return u.unit + (u.is_base ? '' : '×' + Number(u.factor));
+  }).join(' / ');
+}
+
+function unitsFormText(goods) {
+  const units = (goods.units || []).filter(function (u) { return !u.is_base && Number(u.factor) > 1; });
+  return units.map(function (u) { return u.unit + '=' + Number(u.factor); }).join('\n');
+}
+
+function parseUnitsForm(text) {
+  return String(text || '').split(/\n|；|;/).map(function (line) {
+    const match = line.trim().match(/^([^=＝\s]+)\s*[=＝]\s*(\d+(?:\.\d+)?)$/);
+    if (!match) return null;
+    return { unit: match[1], factor: Number(match[2]) };
+  }).filter(function (u) { return u && u.factor > 1; });
+}
+
 function renderGoodsManage() {
   const tbody = $('goodsTableBody');
   if (!tbody) return;
@@ -1821,7 +1914,7 @@ function renderGoodsManage() {
       '<td class="border px-2 py-1">' + esc(g.code) + '</td>' +
       '<td class="border px-2 py-1 font-medium">' + esc(g.name) + '</td>' +
       '<td class="border px-2 py-1">' + esc(g.spec || '-') + '</td>' +
-      '<td class="border px-2 py-1 text-center">' + esc(g.unit || '-') + '</td>' +
+      '<td class="border px-2 py-1 text-center">' + esc(unitsText(g)) + '</td>' +
       '<td class="border px-2 py-1 text-center">' + esc(shelfLifeText(g.shelf_life_days)) + '</td>' +
       '<td class="border px-2 py-1 text-center">' + (g.default_price !== null && g.default_price !== undefined ? '￥' + money(g.default_price) : '-') + '</td>' +
       '<td class="border px-2 py-1 text-center whitespace-nowrap">' +
@@ -1885,7 +1978,8 @@ function openGoodsEdit(id) {
   $('editGoodsCode').value = goods.code || '';
   $('editGoodsName').value = goods.name || '';
   $('editGoodsSpec').value = goods.spec || '';
-  $('editGoodsUnit').value = goods.unit || '';
+  $('editGoodsUnit').value = goods.base_unit || goods.unit || '';
+  $('editGoodsUnits').value = unitsFormText(goods);
   const shelf = shelfPartsFromDays(goods.shelf_life_days);
   $('editGoodsShelfLife').value = shelf.value;
   $('editGoodsShelfUnit').value = shelf.unit;
@@ -1912,6 +2006,8 @@ async function saveGoodsEdit() {
         name: $('editGoodsName').value.trim(),
         spec: $('editGoodsSpec').value.trim(),
         unit: $('editGoodsUnit').value.trim(),
+        base_unit: $('editGoodsUnit').value.trim(),
+        units: parseUnitsForm($('editGoodsUnits').value),
         shelf_life_days: shelfDaysFromInput($('editGoodsShelfLife').value, $('editGoodsShelfUnit').value),
         default_price: priceText === '' ? null : Number(priceText)
       }
@@ -2109,6 +2205,8 @@ async function startEditOrder(orderId) {
         pname: item.goods_name || '',
         spec: item.spec || '',
         unit: item.unit || '',
+        units: goods ? (goods.units || []) : [],
+        baseUnit: goods ? (goods.base_unit || goods.unit || '') : '',
         qty: item.qty,
         price: item.price,
         priceAuto: false,
@@ -2717,7 +2815,7 @@ let purchaseSpecCache = {};
 
 function newPurchaseRow() {
   return {
-    goods_id: null, pid: '', pname: '', spec: '', unit: '',
+    goods_id: null, pid: '', pname: '', spec: '', unit: '', units: [], baseUnit: '',
     qty: 1, price: '', amount: 0, makeDate: '', expDate: '', remark: '',
     shelfLifeDays: 0
   };
@@ -2759,7 +2857,7 @@ function renderPurchaseRows() {
       '<td><input class="w-full border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码" oninput="purchaseRows[' + index + '].pid=this.value" onchange="onPurchasePidChange(' + index + ')" onkeydown="if(event.key===\'Enter\'){this.blur();}"></td>' +
       '<td class="relative purchase-name-cell"><input class="w-full border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（可模糊检索）" oninput="onPurchaseNameInput(' + index + ', this.value)" onfocus="onPurchaseNameFocus(' + index + ')" onkeydown="onPurchaseNameKeydown(event,' + index + ')"><div class="purchase-name-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
       '<td class="relative purchase-spec-cell"><div class="flex gap-1"><input class="w-full border px-1 py-1" value="' + esc(row.spec) + '" placeholder="规格（选或输）" oninput="onPurchaseSpecInput(' + index + ', this.value)" onfocus="openPurchaseSpecSuggest(' + index + ')" onkeydown="onPurchaseSpecKeydown(event,' + index + ')" onblur="onPurchaseSpecBlur(' + index + ', event)"><button type="button" class="border px-1 text-gray-600" onclick="togglePurchaseSpecSuggest(' + index + ')">选</button></div><div class="purchase-spec-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
-      '<td><input class="w-full border px-1 py-1" list="unitOptions" value="' + esc(row.unit) + '" placeholder="选/输单位" oninput="purchaseRows[' + index + '].unit=this.value" onchange="onPurchaseUnitCommit(' + index + ', this.value)"></td>' +
+      '<td>' + purchaseUnitSelectHtml(row, index) + '</td>' +
       qtyCell +
       '<td><input type="number" step="0.01" min="0" class="w-full border px-1 py-1" value="' + esc(row.price) + '" oninput="purchaseRows[' + index + '].price=this.value;calcPurchaseRow(' + index + ')"></td>' +
       '<td><input class="w-full min-w-[80px] border px-1 py-1 bg-gray-50" readonly value="' + money(row.amount) + '"></td>' +
@@ -3073,12 +3171,14 @@ function applyPurchaseGoods(index, item) {
   row.pid = item.code || '';
   row.pname = item.name || row.pname;
   row.spec = item.spec || '';
-  row.unit = item.unit || '';
+  row.units = item.units || [];
+  row.baseUnit = item.base_unit || item.unit || '';
+  row.unit = item.default_purchase_unit || row.baseUnit;
   row.shelfLifeDays = Number(item.shelf_life_days || 0);
   setPurchaseCell(index, 1, row.pid);
   setPurchaseCell(index, 2, row.pname);
   setPurchaseCell(index, 3, row.spec);
-  setPurchaseCell(index, 4, row.unit);
+  renderPurchaseRows();
   calcPurchaseRow(index);
   fillPurchaseExpDate(index);
   if (row.price === '' || row.price === null || row.price === undefined) {
@@ -3112,8 +3212,10 @@ function fetchLastPurchasePrice(index, goodsId) {
     const row = purchaseRow(index);
     if (!row || Number(row.goods_id) !== Number(goodsId)) return;
     if (data.price && (row.price === '' || row.price === null || row.price === undefined)) {
-      row.price = data.price;
-      setPurchaseCell(index, 6, data.price);
+      const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
+      const factor = Number((unit && unit.factor) || 1);
+      row.price = Math.round(Number(data.price) * factor * 100) / 100;
+      setPurchaseCell(index, 6, row.price);
       calcPurchaseRow(index);
     }
   }).catch(function () { /* 无上次价格不阻塞 */ });
@@ -3174,7 +3276,10 @@ async function createPurchaseSpec(index, specText) {
       code: goods.code,
       name: goods.name,
       spec: goods.spec,
-      unit: goods.unit,
+      unit: data.unit || goods.unit,
+      base_unit: goods.base_unit,
+      units: goods.units || [],
+      default_purchase_unit: goods.default_purchase_unit,
       shelf_life_days: goods.shelf_life_days
     });
   } catch (err) {
@@ -3188,20 +3293,7 @@ async function onPurchaseUnitCommit(index, value) {
   const row = purchaseRow(index);
   if (!row) return;
   row.unit = String(value || '').trim();
-  if (!row.goods_id) return;
-  try {
-    const saved = await api('/goods/' + row.goods_id + '/unit', {
-      method: 'PUT',
-      body: { unit: row.unit }
-    });
-    row.unit = saved.unit || '';
-    const goods = findGoodsById(row.goods_id);
-    if (goods) goods.unit = row.unit;
-    updateSpecCacheGoods(row.pname, row.goods_id, { unit: row.unit });
-    delete purchaseSpecCache[purchaseSpecKey(row.pname)];
-  } catch (err) {
-    toast('单位保存失败：' + err.message, 'err');
-  }
+  calcPurchaseRow(index);
 }
 
 function onPurchasePidChange(index) {
@@ -3330,6 +3422,8 @@ async function editPurchase(id) {
         pname: item.goods_name || '',
         spec: item.spec || '',
         unit: item.unit || '',
+        units: goods ? (goods.units || []) : [],
+        baseUnit: goods ? (goods.base_unit || goods.unit || '') : '',
         qty: item.qty,
         price: item.price,
         amount: item.amount,
@@ -4345,9 +4439,93 @@ function fillPrintArea() {
   return area;
 }
 
-function doPrint() {
-  closePrintPreview();
+function desktopPaperMargins(spec) {
+  if (spec.w === 241 && spec.h === 280) return { left_mm: 0, right_mm: 38, top_mm: 10, bottom_mm: 10 };
+  if (spec.w === 241 && spec.h === 140) return { left_mm: 0, right_mm: 38, top_mm: 5, bottom_mm: 5 };
+  if (spec.w === 241 && spec.h === 93) return { left_mm: 0, right_mm: 38, top_mm: 3, bottom_mm: 3 };
+  return { left_mm: 10, right_mm: 10, top_mm: 12, bottom_mm: 12 };
+}
+
+function buildDesktopPrintJob(cfg) {
+  const validRows = sellRows.filter(function (row) {
+    return row.pid && Number(row.qty) > 0 && Number(row.price) > 0;
+  });
+  const cfgPaper = cfg && cfg.paper && Number(cfg.paper.width_mm) > 0 && Number(cfg.paper.height_mm) > 0
+    ? { width_mm: Number(cfg.paper.width_mm), height_mm: Number(cfg.paper.height_mm) }
+    : { width_mm: 241, height_mm: 93 };
+  const paperSpec = { w: cfgPaper.width_mm, h: cfgPaper.height_mm };
+  const sumQty = validRows.reduce(function (sum, row) { return sum + Number(row.qty); }, 0);
+  const sumAmt = validRows.reduce(function (sum, row) { return sum + Number(row.amount); }, 0);
+  const paper = { width_mm: paperSpec.w, height_mm: paperSpec.h };
+  return {
+    printer: (cfg && cfg.printer) || '',
+    paper: paper,
+    margins: (cfg && cfg.margins) || desktopPaperMargins(paperSpec),
+    offset: (cfg && cfg.offset) || { x_mm: 0, y_mm: 0 },
+    copies: (cfg && cfg.copies) || 1,
+    font: (cfg && cfg.font) || { name: 'SimSun', size_pt: paperSpec.h < 180 ? 10.5 : 11 },
+    header: {
+      shop_name: shopInfo.name || '中卫市源盛调味品店',
+      shop_info: (shopInfo.addr || '中卫市沙坡头区文昌镇四季鲜批发市场19#S11') +
+        '  电话：' + (shopInfo.tel || '13409552186'),
+      title: '销售单',
+      order_no: $('sellOrderNo').value,
+      date: $('sellDate').value,
+      customer: $('sellCustomerInput').value || '散客',
+      customer_addr: $('custAddr').value,
+      customer_tel: $('custTel').value,
+      customer_remark: $('billRemark').value
+    },
+    items: validRows.map(function (row) {
+      return {
+        code: row.pid,
+        name: row.pname,
+        spec: row.spec,
+        unit: row.unit,
+        qty: row.qty,
+        price: money(row.price),
+        amount: money(row.amount),
+        make_date: row.makeDate,
+        exp_date: row.expDate,
+        remark: row.remark
+      };
+    }),
+    totals: {
+      qty: Math.round(sumQty * 100) / 100,
+      amount: money(sumAmt),
+      amount_upper: rmbUpper(sumAmt)
+    },
+    labels: {
+      code: '编码', name: '品名', spec: '规格', unit: '单位', qty: '数量',
+      price: '单价', amount: '金额', make_date: '生产日期', exp_date: '保质期至', remark: '备注',
+      order_no: '单号', date: '日期', customer: '客户', addr: '地址', tel: '电话',
+      total_qty: '合计数量', total_amount: '合计金额', total_upper: '大写',
+      sign_left: '送货单位及经手人（盖章）：', sign_right: '收货单位及经手人（盖章）：', page: '页', empty: '无商品明细'
+    },
+    footer: {
+      sign_left: '送货单位及经手人（盖章）：',
+      sign_right: '收货单位及经手人（盖章）：'
+    }
+  };
+}
+
+async function doPrint() {
   fillPrintArea();
+
+  if (window.billingDesktop && window.billingDesktop.openPrintSettings) {
+    try {
+      const result = await window.billingDesktop.getConfig();
+      if (!result.ok) return toast(result.error || '读取打印设置失败', 'err');
+      const job = buildDesktopPrintJob(result.config);
+      const opened = await window.billingDesktop.openPrintSettings(job);
+      if (!opened || opened.ok === false) return toast((opened && opened.error) || '打开打印设置失败', 'err');
+      return toast('已打开打印设置，请在设置窗口点击“打印当前单据”', 'ok');
+    } catch (err) {
+      return toast('打印失败：' + (err.message || err), 'err');
+    }
+  }
+
+  closePrintPreview();
   setTimeout(function () { window.print(); }, 60);
 }
 
