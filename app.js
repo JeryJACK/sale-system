@@ -726,7 +726,7 @@ function renderSellTable() {
       '<td class="relative name-cell"><input class="w-full min-w-[150px] border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（输入联想）" oninput="onPnameInput(' + index + ',this.value)" onkeydown="onNameKeydown(event,' + index + ')"' + dis + '>' +
       '<div class="name-suggest hidden fixed bg-white border shadow-lg z-50 max-h-64 overflow-auto text-xs" onscroll="onNameScroll(event,' + index + ')"></div></td>' +
       '<td class="relative spec-cell"><div class="flex items-center gap-1">' +
-      '<input class="flex-1 min-w-[90px] border px-1 py-1 bg-gray-50" value="' + esc(row.spec) + '" placeholder="选/输入规格" ' +
+      '<input class="flex-1 min-w-[90px] border px-1 py-1 bg-gray-50" value="' + esc(displaySpec(row)) + '" placeholder="选/输入规格" ' +
       'oninput="onSpecInput(' + index + ',this.value)" onfocus="openSpecSuggest(' + index + ')" ' +
       'onkeydown="onSpecKeydown(event,' + index + ')" onblur="onSpecBlur(' + index + ',event)"' + dis + '>' +
       '<button type="button" onclick="toggleSpecSuggest(' + index + ')" title="查看/选择规格" class="shrink-0 w-7 text-center text-primaryBlue border rounded"' + dis + '>选</button>' +
@@ -994,10 +994,7 @@ async function onUnitCommit(index, value) {
   const row = sellRows[index];
   if (!row) return;
   row.unit = String(value || '').trim();
-  const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
-  if (row.priceAuto || row.unitChanged) {
-    row.price = unitPrice(row, row.unit);
-  }
+  row.price = unitPrice(row, row.unit);
   row.unitChanged = true;
   updatePriceCell(index);
   calcRowAmount(index);
@@ -1020,6 +1017,20 @@ function unitPrice(row, unitName) {
     : row.defaultPrice;
   if (basePrice === null || basePrice === undefined || basePrice === '') return '';
   return Math.round(basePrice * Number((unit && unit.factor) || 1) * 10000) / 10000;
+}
+
+/* 包装单位显示完整规格：400g + 件(40倍/袋) => 400g*40袋 */
+function displaySpec(row) {
+  const spec = String(row.spec || '').trim();
+  if (!spec || spec.indexOf('*') >= 0 || spec.indexOf('×') >= 0) return spec;
+  const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
+  const factor = Number((unit && unit.factor) || 1);
+  const baseUnit = row.baseUnit || ((row.units || []).find(function (u) { return u.is_base; }) || {}).unit || '';
+  if (factor > 1 && baseUnit) {
+    const factorText = Number.isInteger(factor) ? String(factor) : String(factor);
+    return spec + '*' + factorText + baseUnit;
+  }
+  return spec;
 }
 
 /* 记住价格后同步规格下拉里的客户价显示 */
@@ -1285,6 +1296,7 @@ function applySpecToRow(index, item) {
     };
   }
   renderSellTable();
+  calcRowAmount(index);
   if (stockConfig.mode === 'batch') {
     openBatchPicker(index, { id: row.goods_id, code: row.pid, name: row.pname });
   } else {
@@ -1550,6 +1562,7 @@ function applyGoodsToRow(index, goods, opts) {
   row.history = [];
   applyCustomerPrice(index, true);
   renderSellTable();
+  calcRowAmount(index);
   if (stockConfig.mode === 'batch') {
     openBatchPicker(index, goods);
   } else {
@@ -2856,7 +2869,7 @@ function renderPurchaseRows() {
       '<td class="text-center"><button onclick="delPurchaseRow(' + index + ')" class="text-red-500 text-lg leading-none">－</button></td>' +
       '<td><input class="w-full border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码" oninput="purchaseRows[' + index + '].pid=this.value" onchange="onPurchasePidChange(' + index + ')" onkeydown="if(event.key===\'Enter\'){this.blur();}"></td>' +
       '<td class="relative purchase-name-cell"><input class="w-full border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（可模糊检索）" oninput="onPurchaseNameInput(' + index + ', this.value)" onfocus="onPurchaseNameFocus(' + index + ')" onkeydown="onPurchaseNameKeydown(event,' + index + ')"><div class="purchase-name-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
-      '<td class="relative purchase-spec-cell"><div class="flex gap-1"><input class="w-full border px-1 py-1" value="' + esc(row.spec) + '" placeholder="规格（选或输）" oninput="onPurchaseSpecInput(' + index + ', this.value)" onfocus="openPurchaseSpecSuggest(' + index + ')" onkeydown="onPurchaseSpecKeydown(event,' + index + ')" onblur="onPurchaseSpecBlur(' + index + ', event)"><button type="button" class="border px-1 text-gray-600" onclick="togglePurchaseSpecSuggest(' + index + ')">选</button></div><div class="purchase-spec-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
+      '<td class="relative purchase-spec-cell"><div class="flex gap-1"><input class="w-full border px-1 py-1" value="' + esc(displaySpec(row)) + '" placeholder="规格（选或输）" oninput="onPurchaseSpecInput(' + index + ', this.value)" onfocus="openPurchaseSpecSuggest(' + index + ')" onkeydown="onPurchaseSpecKeydown(event,' + index + ')" onblur="onPurchaseSpecBlur(' + index + ', event)"><button type="button" class="border px-1 text-gray-600" onclick="togglePurchaseSpecSuggest(' + index + ')">选</button></div><div class="purchase-spec-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
       '<td>' + purchaseUnitSelectHtml(row, index) + '</td>' +
       qtyCell +
       '<td><input type="number" step="0.01" min="0" class="w-full border px-1 py-1" value="' + esc(row.price) + '" oninput="purchaseRows[' + index + '].price=this.value;calcPurchaseRow(' + index + ')"></td>' +
@@ -3293,7 +3306,9 @@ async function onPurchaseUnitCommit(index, value) {
   const row = purchaseRow(index);
   if (!row) return;
   row.unit = String(value || '').trim();
+  row.price = unitPrice(row, row.unit);
   calcPurchaseRow(index);
+  renderPurchaseRows();
 }
 
 function onPurchasePidChange(index) {
@@ -3365,7 +3380,7 @@ async function savePurchase() {
             goods_id: row.goods_id || null,
             goods_code: row.pid,
             goods_name: row.pname,
-            spec: row.spec,
+            spec: displaySpec(row),
             unit: row.unit,
             qty: Number(row.qty),
             price: Number(row.price),
@@ -4387,7 +4402,7 @@ function printSellBill() {
     return '<tr>' +
       '<td>' + esc(row.pid) + '</td>' +
       '<td>' + esc(row.pname) + '</td>' +
-      '<td>' + esc(row.spec) + '</td>' +
+      '<td>' + esc(displaySpec(row)) + '</td>' +
       '<td>' + esc(row.unit) + '</td>' +
       '<td>' + esc(row.qty) + '</td>' +
       '<td>' + money(row.price) + '</td>' +
@@ -4480,7 +4495,7 @@ function buildDesktopPrintJob(cfg) {
       return {
         code: row.pid,
         name: row.pname,
-        spec: row.spec,
+        spec: displaySpec(row),
         unit: row.unit,
         qty: row.qty,
         price: money(row.price),
