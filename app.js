@@ -831,7 +831,7 @@ function saleUnitPrice(row, unitName) {
 
 function unitSelectHtml(row, index, dis) {
   const units = row.units || [];
-  if (!units.length || row.allowUnitEdit) {
+  if (!units.length || units.length === 1 || row.allowUnitEdit) {
     return '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" list="unitOptions" placeholder="单位" value="' + esc(row.unit) + '" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>';
   }
   return '<select class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +

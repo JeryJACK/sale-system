@@ -87,6 +87,11 @@
 
 /* ===== 业务界面补充样式 ===== */
 .price-history { font-size:11px; color:#9ca3af; line-height:1.25; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
+/* 销售明细：新增行“＋”始终固定在左上角，横向滚动/页面滚动都不会丢 */
+#sellTable thead th { position:sticky; top:0; z-index:6; background:#f3f4f6; }
+#sellTable tbody td:first-child { position:sticky; left:0; z-index:4; background:#fff; }
+#sellTable thead th:first-child { position:sticky; left:0; top:0; z-index:9; background:#f3f4f6; }
+#sellTable thead th:first-child button { position:relative; z-index:10; }
 .table-scroll { max-height: calc(100vh - 300px); overflow:auto; }
 .toast { position:fixed; top:16px; right:16px; z-index:200; display:flex; flex-direction:column; gap:8px; }
 .toast-item { min-width:220px; max-width:380px; padding:10px 14px; border-radius:6px; color:#fff; font-size:14px; box-shadow:0 8px 24px rgba(0,0,0,.18); animation:toastIn .18s ease-out; }
@@ -143,7 +148,7 @@
   </div>
   <div class="flex-1"></div>
   <div class="flex items-center gap-4 text-sm">
-    <span class="text-xs text-white/60">v1.1.0</span>
+    <span class="text-xs text-white/60">v1.1.2</span>
     <span><span id="currentUserName">--</span></span>
     <button onclick="doLogout()" class="border border-white/40 rounded px-3 py-1 text-xs hover:bg-white/10">退出</button>
   </div>
@@ -310,7 +315,7 @@
 
           <!-- 销售明细表格 -->
           <div class="overflow-x-auto border mb-4">
-            <table class="w-full text-sm" style="table-layout:fixed;min-width:1360px">
+            <table id="sellTable" class="w-full text-sm" style="table-layout:fixed;min-width:1360px">
               <colgroup>
                 <col style="width:2%">
                 <col style="width:11%">
@@ -1185,6 +1190,7 @@
 <script src="./app.js?v=20261117x"></script>
 </body>
 </html>
+
 
 
 
