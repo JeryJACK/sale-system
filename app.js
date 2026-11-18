@@ -838,20 +838,17 @@ function renderSellTable() {
     const ro = row.goods_id ? ' readonly' : '';
     return '<tr class="border-b">' +
       '<td class="text-center"><button onclick="delRow(' + index + ')" class="text-red-500 text-lg leading-none" title="删除本行"' + dis + '>－</button></td>' +
-      '<td><div class="flex items-center gap-1">' +
-      '<input class="flex-1 min-w-0 border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码" ' +
+      '<td><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码（点此选择）" ' +
       'oninput="sellRows[' + index + '].pid=this.value" onchange="onPidChange(' + index + ')" ' +
-      'onkeydown="if(event.key===\'Enter\'){this.blur();}"' + dis + '>' +
-      '<button type="button" onclick="openProductModal(' + index + ')" title="从商品档案选择" class="shrink-0 w-7 text-center text-primaryBlue border rounded"' + dis + '>查</button>' +
-      '</div></td>' +
+      'onclick="if(!this.disabled&&!sellRows[' + index + '].pid)openProductModal(' + index + ')" ' +
+      'ondblclick="if(!this.disabled)openProductModal(' + index + ')" ' +
+      'onkeydown="if(event.key===\'Enter\'){this.blur();}"' + dis + '></td>' +
       '<td class="relative name-cell"><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（输入联想）" oninput="onPnameInput(' + index + ',this.value)" onkeydown="onNameKeydown(event,' + index + ')"' + dis + '>' +
       '<div class="name-suggest hidden fixed bg-white border shadow-lg z-50 max-h-64 overflow-auto text-xs" onscroll="onNameScroll(event,' + index + ')"></div></td>' +
-      '<td class="relative spec-cell"><div class="flex items-center gap-1">' +
-      '<input class="flex-1 min-w-0 border px-1 py-1 bg-gray-50" value="' + esc(displaySpec(row)) + '" placeholder="选/输入规格" ' +
+      '<td class="relative spec-cell">' +
+      '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50" value="' + esc(displaySpec(row)) + '" placeholder="点此选择/输入规格" ' +
       'oninput="onSpecInput(' + index + ',this.value)" onfocus="openSpecSuggest(' + index + ')" ' +
       'onkeydown="onSpecKeydown(event,' + index + ')" onblur="onSpecBlur(' + index + ',event)"' + dis + '>' +
-      '<button type="button" onclick="toggleSpecSuggest(' + index + ')" title="查看/选择规格" class="shrink-0 w-7 text-center text-primaryBlue border rounded"' + dis + '>选</button>' +
-      '</div>' +
       '<div class="spec-suggest hidden fixed bg-white border shadow-lg z-50 max-h-56 overflow-auto text-xs"></div></td>' +
       '<td>' + unitSelectHtml(row, index, dis) + '</td>' +
       '<td><input type="number" step="0.01" min="0" class="w-full border px-1 py-1" value="' + esc(row.qty) + '" placeholder="数量" oninput="updateQty(' + index + ',this.value)"' + dis + '></td>' +
