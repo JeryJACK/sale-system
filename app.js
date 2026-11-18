@@ -837,7 +837,7 @@ function unitSelectHtml(row, index, dis) {
   return '<select class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +
     units.map(function (u) {
       return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
-        esc(u.unit) + (Number(u.factor) > 1 ? '×' + Number(u.factor) : '') + '</option>';
+        esc(u.unit) + '</option>';
     }).join('') + '</select>';
 }
 
@@ -849,7 +849,7 @@ function purchaseUnitSelectHtml(row, index) {
   return '<select class="w-full border px-1 py-1" onchange="onPurchaseUnitCommit(' + index + ',this.value)">' +
     units.map(function (u) {
       return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
-        esc(u.unit) + (Number(u.factor) > 1 ? '×' + Number(u.factor) : '') + '</option>';
+        esc(u.unit) + '</option>';
     }).join('') + '</select>';
 }
 
