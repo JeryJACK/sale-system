@@ -310,6 +310,11 @@ function collapseSideMenu() {
   if (!menu) return;
   sideMenuTimer = null;
   if (sideMenuHovered || menu.matches(':hover')) return;
+  const active = document.activeElement;
+  if (active && active.matches && active.matches('input, textarea, select') &&
+      !active.disabled && !active.readOnly && active.closest && active.closest('#page-sale')) {
+    return;
+  }
   menu.classList.add('is-collapsed');
 }
 
@@ -348,16 +353,40 @@ function initSideMenuAutoCollapse() {
   scheduleSideMenuCollapse();
 }
 
+function releaseHiddenFocus() {
+  const active = document.activeElement;
+  if (active && active !== document.body && active.closest && active.closest('.hidden')) {
+    try { active.blur(); } catch (e) {}
+    return true;
+  }
+  return false;
+}
+
 function switchPage(pageName) {
   setMenuActive(pageName);
+  closeNameSuggest();
+  closeSpecSuggest();
+  closePurchaseNameSuggest();
+  closePurchaseSpecSuggest();
   ['home', 'sale', 'orderList', 'detail', 'customerManage', 'purchase', 'stock', 'stat', 'import', 'setting'].forEach(function (id) {
     const page = $('page-' + id);
     if (page) page.classList.add('hidden');
   });
   const target = $('page-' + pageName);
   if (target) target.classList.remove('hidden');
+  const focusWasHidden = releaseHiddenFocus();
 
-  if (pageName === 'sale') { renderShopInfo(); setSaleModeUI(); loadStockConfig(); }
+  if (pageName === 'sale') {
+    renderShopInfo();
+    setSaleModeUI();
+    loadStockConfig();
+    if (focusWasHidden || (!editingOrderId && !currentCustomer)) {
+      setTimeout(function () {
+        const input = $('sellCustomerInput');
+        if (input && !input.disabled) input.focus();
+      }, 0);
+    }
+  }
   if (pageName === 'home') loadHome();
   if (pageName === 'orderList') loadOrders();
   if (pageName === 'detail') loadDetailList();
@@ -781,9 +810,9 @@ function saleUnitPrice(row, unitName) {
 function unitSelectHtml(row, index, dis) {
   const units = row.units || [];
   if (!units.length) {
-    return '<input class="w-full min-w-[55px] border px-1 py-1 bg-gray-50" list="unitOptions" value="' + esc(row.unit) + '" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>';
+    return '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50" list="unitOptions" placeholder="单位" value="' + esc(row.unit) + '" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>';
   }
-  return '<select class="w-full min-w-[60px] border px-1 py-1 bg-gray-50" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +
+  return '<select class="w-full min-w-0 border px-1 py-1 bg-gray-50" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +
     units.map(function (u) {
       return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
         esc(u.unit) + (Number(u.factor) > 1 ? '（×' + Number(u.factor) + '）' : '') + '</option>';
@@ -810,31 +839,31 @@ function renderSellTable() {
     return '<tr class="border-b">' +
       '<td class="text-center"><button onclick="delRow(' + index + ')" class="text-red-500 text-lg leading-none" title="删除本行"' + dis + '>－</button></td>' +
       '<td><div class="flex items-center gap-1">' +
-      '<input class="flex-1 min-w-[105px] border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码" ' +
+      '<input class="flex-1 min-w-0 border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码" ' +
       'oninput="sellRows[' + index + '].pid=this.value" onchange="onPidChange(' + index + ')" ' +
       'onkeydown="if(event.key===\'Enter\'){this.blur();}"' + dis + '>' +
       '<button type="button" onclick="openProductModal(' + index + ')" title="从商品档案选择" class="shrink-0 w-7 text-center text-primaryBlue border rounded"' + dis + '>查</button>' +
       '</div></td>' +
-      '<td class="relative name-cell"><input class="w-full min-w-[150px] border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（输入联想）" oninput="onPnameInput(' + index + ',this.value)" onkeydown="onNameKeydown(event,' + index + ')"' + dis + '>' +
+      '<td class="relative name-cell"><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（输入联想）" oninput="onPnameInput(' + index + ',this.value)" onkeydown="onNameKeydown(event,' + index + ')"' + dis + '>' +
       '<div class="name-suggest hidden fixed bg-white border shadow-lg z-50 max-h-64 overflow-auto text-xs" onscroll="onNameScroll(event,' + index + ')"></div></td>' +
       '<td class="relative spec-cell"><div class="flex items-center gap-1">' +
-      '<input class="flex-1 min-w-[90px] border px-1 py-1 bg-gray-50" value="' + esc(displaySpec(row)) + '" placeholder="选/输入规格" ' +
+      '<input class="flex-1 min-w-0 border px-1 py-1 bg-gray-50" value="' + esc(displaySpec(row)) + '" placeholder="选/输入规格" ' +
       'oninput="onSpecInput(' + index + ',this.value)" onfocus="openSpecSuggest(' + index + ')" ' +
       'onkeydown="onSpecKeydown(event,' + index + ')" onblur="onSpecBlur(' + index + ',event)"' + dis + '>' +
       '<button type="button" onclick="toggleSpecSuggest(' + index + ')" title="查看/选择规格" class="shrink-0 w-7 text-center text-primaryBlue border rounded"' + dis + '>选</button>' +
       '</div>' +
       '<div class="spec-suggest hidden fixed bg-white border shadow-lg z-50 max-h-56 overflow-auto text-xs"></div></td>' +
       '<td>' + unitSelectHtml(row, index, dis) + '</td>' +
-      '<td><input type="number" step="0.01" min="0" class="w-full min-w-[65px] border px-1 py-1" value="' + esc(row.qty) + '" placeholder="数量" oninput="updateQty(' + index + ',this.value)"' + dis + '></td>' +
+      '<td><input type="number" step="0.01" min="0" class="w-full border px-1 py-1" value="' + esc(row.qty) + '" placeholder="数量" oninput="updateQty(' + index + ',this.value)"' + dis + '></td>' +
       '<td>' +
-      '<input type="number" step="0.01" min="0" class="w-full min-w-[80px] border px-1 py-1" list="priceList_' + index + '" value="' + esc(row.price) + '" placeholder="单价" oninput="updatePrice(' + index + ',this.value)" onchange="onPriceCommit(' + index + ')"' + dis + '>' +
+      '<input type="number" step="0.01" min="0" class="w-full border px-1 py-1" list="priceList_' + index + '" value="' + esc(row.price) + '" placeholder="单价" oninput="updatePrice(' + index + ',this.value)" onchange="onPriceCommit(' + index + ')"' + dis + '>' +
       '<datalist id="priceList_' + index + '">' + historyOptions(row) + '</datalist>' +
       '<div class="price-history" id="priceHint_' + index + '" title="' + esc(historyTitle(row)) + '">' + esc(historyText(row)) + '</div>' +
       '</td>' +
-      '<td><input class="w-full min-w-[80px] border px-1 py-1 bg-gray-50" readonly value="' + money(row.amount) + '"></td>' +
-      '<td><input type="date" class="w-full min-w-[125px] border px-1 py-1" value="' + esc(row.makeDate) + '" onchange="updateMakeDate(' + index + ',this.value)"' + dis + '></td>' +
-      '<td><input type="date" class="w-full min-w-[125px] border px-1 py-1" value="' + esc(row.expDate) + '" onchange="updateExpireDate(' + index + ',this.value)"' + dis + '></td>' +
-      '<td><input class="w-full min-w-[90px] border px-1 py-1" value="' + esc(row.remark) + '" placeholder="备注" oninput="sellRows[' + index + '].remark=this.value"' + dis + '></td>' +
+      '<td><input class="w-full border px-1 py-1 bg-gray-50" readonly value="' + money(row.amount) + '"></td>' +
+      '<td><input type="date" class="w-full border px-1 py-1" value="' + esc(row.makeDate) + '" onchange="updateMakeDate(' + index + ',this.value)"' + dis + '></td>' +
+      '<td><input type="date" class="w-full border px-1 py-1" value="' + esc(row.expDate) + '" onchange="updateExpireDate(' + index + ',this.value)"' + dis + '></td>' +
+      '<td><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.remark) + '" placeholder="备注" oninput="sellRows[' + index + '].remark=this.value"' + dis + '></td>' +
       '<td></td></tr>';
   }).join('');
   calcTotal();
@@ -2071,9 +2100,12 @@ async function addGoods() {
   } catch (err) { toast(err.message, 'err'); }
 }
 
+let goodsModalReturnFocus = null;
+
 function openGoodsEdit(id) {
   const goods = findGoodsById(id);
   if (!goods) return;
+  goodsModalReturnFocus = document.activeElement;
   $('editGoodsId').value = goods.id;
   $('editGoodsCode').value = goods.code || '';
   $('editGoodsName').value = goods.name || '';
@@ -2091,8 +2123,18 @@ function openGoodsEdit(id) {
 
 function closeGoodsModal() {
   const modal = $('goodsModal');
+  const active = document.activeElement;
+  if (active && active.closest && active.closest('#goodsModal')) {
+    try { active.blur(); } catch (e) {}
+  }
   modal.classList.add('hidden');
   modal.classList.remove('flex');
+  try { window.focus(); } catch (e) {}
+  const returnTo = goodsModalReturnFocus;
+  goodsModalReturnFocus = null;
+  if (returnTo && returnTo.focus && !returnTo.closest('.hidden')) {
+    setTimeout(function () { try { returnTo.focus(); } catch (e) {} }, 0);
+  }
 }
 
 async function saveGoodsEdit() {
@@ -2242,6 +2284,7 @@ function isOrderLocked() {
 
 function setSaleModeUI() {
   const isEdit = !!editingOrderId;
+  if (!isEdit) editingOrder = null;
   const locked = isOrderLocked();
   $('salePageTitle').textContent = isEdit ? '销售订单详情' : '新增销售';
   $('salePageHint').textContent = isEdit
@@ -2270,7 +2313,16 @@ function setSaleModeUI() {
     status.textContent = locked ? '已作废' : '正常';
     status.className = 'px-2 py-0.5 rounded ' + (locked ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700');
   }
-  if (locked) renderSellTable();
+  if (locked) {
+    renderSellTable();
+  } else {
+    const tbody = $('sellTableBody');
+    if (tbody) {
+      tbody.querySelectorAll('input, select, button').forEach(function (el) {
+        if (el.type !== 'checkbox') el.disabled = false;
+      });
+    }
+  }
 }
 
 async function startEditOrder(orderId) {
