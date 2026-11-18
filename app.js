@@ -376,6 +376,13 @@ function switchPage(pageName) {
   if (target) target.classList.remove('hidden');
   const focusWasHidden = releaseHiddenFocus();
 
+  if (['sale', 'purchase', 'stock', 'customerManage', 'setting'].indexOf(pageName) >= 0) {
+    refreshGoods().catch(function () {});
+  }
+  if (['sale', 'customerManage'].indexOf(pageName) >= 0) {
+    refreshCustomers().catch(function () {});
+  }
+
   if (pageName === 'sale') {
     renderShopInfo();
     setSaleModeUI();
@@ -474,6 +481,20 @@ async function loadHome() {
 async function refreshCustomers() {
   customers = await fetchAll('/customers');
   loaded.customers = true;
+  specCache = {};
+  purchaseSpecCache = {};
+  if (currentCustomer) {
+    const fresh = customers.find(function (c) { return String(c.id) === String(currentCustomer.id); });
+    if (fresh) {
+      currentCustomer = {
+        id: fresh.id, customer_no: fresh.customer_no, name: fresh.name, addr: fresh.addr, tel: fresh.tel
+      };
+      if ($('sellCustomerInput')) $('sellCustomerInput').value = fresh.name || '';
+      if ($('custNo')) $('custNo').value = fresh.customer_no || '';
+      if ($('custAddr')) $('custAddr').value = fresh.addr || '';
+      if ($('custTel')) $('custTel').value = fresh.tel || '';
+    }
+  }
   renderCustomerManage();
 }
 
@@ -726,6 +747,7 @@ function findGoodsById(id) {
 function newRow() {
   return {
     goods_id: null, pid: '', pname: '', spec: '', unit: '', units: [], baseUnit: '',
+    allowUnitEdit: false,
     qty: 1, price: '', priceAuto: false, amount: 0,
     makeDate: '', expDate: '', remark: '', stock_id: null,
     shelfLifeDays: 0, expireManual: false, history: [], defaultPrice: null,
@@ -809,7 +831,7 @@ function saleUnitPrice(row, unitName) {
 
 function unitSelectHtml(row, index, dis) {
   const units = row.units || [];
-  if (!units.length) {
+  if (!units.length || row.allowUnitEdit) {
     return '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" list="unitOptions" placeholder="单位" value="' + esc(row.unit) + '" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>';
   }
   return '<select class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +
@@ -1141,13 +1163,13 @@ function unitPrice(row, unitName) {
 /* 包装单位显示完整规格：400g + 件(40倍/袋) => 400g*40袋 */
 function displaySpec(row) {
   const spec = String(row.spec || '').trim();
-  if (!spec || spec.indexOf('*') >= 0 || spec.indexOf('×') >= 0) return spec;
+  if (!spec || spec.indexOf('*') >= 0 || spec.indexOf('×') >= 0 || spec.indexOf('/') >= 0) return spec;
   const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
   const factor = Number((unit && unit.factor) || 1);
   const baseUnit = row.baseUnit || ((row.units || []).find(function (u) { return u.is_base; }) || {}).unit || '';
+  if (baseUnit && spec.toLowerCase().slice(-baseUnit.length).toLowerCase() === baseUnit.toLowerCase()) return spec;
   if (factor > 1 && baseUnit) {
-    const factorText = Number.isInteger(factor) ? String(factor) : String(factor);
-    return spec + '*' + factorText + baseUnit;
+    return spec + '*' + String(factor) + baseUnit;
   }
   return spec;
 }
@@ -1387,6 +1409,7 @@ function applySpecToRow(index, item) {
   row.goods_id = Number(item.goods_id);
   row.pid = item.code || '';
   row.spec = item.spec || '';
+  row.allowUnitEdit = !String(item.spec || '').trim();
   row.units = item.units || [];
   row.baseUnit = item.base_unit || item.unit || '';
   row.unit = item.default_sale_unit || row.baseUnit;
@@ -1673,6 +1696,7 @@ function applyGoodsToRow(index, goods, opts) {
   row.goods_id = goods.id;
   row.pname = goods.name;
   row.spec = goods.spec || '';
+  row.allowUnitEdit = !String(goods.spec || '').trim();
   row.units = goods.units || [];
   row.baseUnit = goods.base_unit || goods.unit || '';
   row.unit = goods.default_sale_unit || row.baseUnit;
@@ -2001,7 +2025,38 @@ async function addProduct() {
 async function refreshGoods() {
   goodsList = await fetchAll('/goods');
   loaded.goods = true;
+  specCache = {};
+  purchaseSpecCache = {};
+  if (currentCustomer) {
+    loadCustomerPrices(currentCustomer.id).catch(function () {});
+  } else {
+    priceMap = {};
+  }
   renderGoodsManage();
+  syncSellRowsWithGoods();
+}
+
+/* 商品资料修改后，同步已在销售页里的同一商品行，不用重启软件 */
+function syncSellRowsWithGoods() {
+  let changed = false;
+  sellRows.forEach(function (row) {
+    if (!row.goods_id) return;
+    const goods = findGoodsById(row.goods_id);
+    if (!goods) return;
+    const units = goods.units || [];
+    row.pname = goods.name || row.pname;
+    row.spec = goods.spec || row.spec;
+    row.units = units;
+    row.baseUnit = goods.base_unit || goods.unit || row.baseUnit;
+    row.defaultPrice = goods.default_price;
+    if (!units.some(function (u) { return u.unit === row.unit; })) {
+      row.unit = row.baseUnit;
+    }
+    row.specFor = '';
+    row.specOptions = [];
+    changed = true;
+  });
+  if (changed && $('sellTableBody') && !isOrderLocked()) renderSellTable();
 }
 
 function unitsText(goods) {
