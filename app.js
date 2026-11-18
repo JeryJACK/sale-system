@@ -362,7 +362,20 @@ function releaseHiddenFocus() {
   return false;
 }
 
-function switchPage(pageName) {
+function switchPage(pageName, keepOrderEdit) {
+  // 从其它页面（含首页“去开单”）进入新增销售时，必须彻底退出上一张订单的编辑态，
+  // 否则 editingOrderId 残留会把客户、日期、明细全部禁用，表现为“点输入框没反应”。
+  if (pageName === 'sale' && !keepOrderEdit && editingOrderId) {
+    exitOrderEdit();
+  }
+  // 切页时把可能残留的弹窗层收掉，避免透明遮罩盖住新页面导致“鼠标点了没反应”。
+  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'printPreviewModal'].forEach(function (id) {
+    const modal = $(id);
+    if (modal && !modal.classList.contains('hidden')) {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+  });
   setMenuActive(pageName);
   closeNameSuggest();
   closeSpecSuggest();
@@ -2455,7 +2468,7 @@ async function startEditOrder(orderId) {
     const order = await api('/orders/' + orderId);
     editingOrder = order;
     editingOrderId = order.id;
-    switchPage('sale');
+    switchPage('sale', true);
     setMenuActive('orderList');
     $('sellOrderNo').value = order.order_no || '';
     $('sellCustomerInput').value = order.customer_name || '';
