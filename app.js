@@ -1750,8 +1750,14 @@ async function loadDateMemo(index, goods) {
     if (!memo) return;
     const row = sellRows[index];
     if (!row || Number(row.goods_id) !== Number(goods.id)) return;
+    // 用户在等待请求期间已经手输了日期，以手输为准
+    if (row.makeDate || row.expDate) return;
     row.makeDate = memo.produce_date || '';
     row.expDate = memo.expire_date || '';
+    // 效期记忆只有生产日期时，按商品保质期自动补“保质期至”
+    if (row.makeDate && !row.expDate && Number(row.shelfLifeDays) > 0) {
+      row.expDate = addDays(row.makeDate, Number(row.shelfLifeDays));
+    }
     renderSellTable();
   } catch (err) {
     // 联想/记忆失败不阻塞录入
