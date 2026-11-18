@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -143,7 +143,7 @@
   </div>
   <div class="flex-1"></div>
   <div class="flex items-center gap-4 text-sm">
-    <span class="text-xs text-white/60">v1.0.7</span>
+    <span class="text-xs text-white/60">v1.1.0</span>
     <span><span id="currentUserName">--</span></span>
     <button onclick="doLogout()" class="border border-white/40 rounded px-3 py-1 text-xs hover:bg-white/10">退出</button>
   </div>
@@ -1021,15 +1021,20 @@
       <input type="hidden" id="editGoodsId">
       <div><label class="block mb-1">编码（系统自动分配，不可修改）</label><input id="editGoodsCode" class="border w-full px-3 py-2 bg-gray-100 text-gray-600" readonly></div>
       <div><label class="block mb-1">品名</label><input id="editGoodsName" class="border w-full px-3 py-2"></div>
+      <div><label class="block mb-1">规格</label><input id="editGoodsSpec" class="border w-full px-3 py-2"></div>
       <div class="grid grid-cols-2 gap-2">
-        <div><label class="block mb-1">规格</label><input id="editGoodsSpec" class="border w-full px-3 py-2"></div>
-        <div><label class="block mb-1">单位</label><input id="editGoodsUnit" list="unitOptions" class="border w-full px-3 py-2" placeholder="选择或输入单位"></div>
+        <div><label class="block mb-1">最小单位（如 包、袋、kg）</label><input id="editGoodsUnit" list="unitOptions" class="border w-full px-3 py-2" placeholder="选择或输入单位" oninput="syncEditGoodsPrice()"></div>
+        <div><label class="block mb-1">整件价（元/整件）</label><input id="editGoodsCasePrice" type="number" step="0.01" min="0" class="border w-full px-3 py-2" placeholder="输入整件销售价" oninput="syncEditGoodsPrice()"></div>
       </div>
-      <div><label class="block mb-1">参考价（按最小单位，如 1 袋；无客户价时使用，可空）</label><input id="editGoodsPrice" type="number" step="0.01" min="0" class="border w-full px-3 py-2"></div>
       <div>
-        <label class="block mb-1">包装单位换算（每行一个，格式：单位=倍数）</label>
-        <textarea id="editGoodsUnits" rows="3" class="border w-full px-3 py-2" placeholder="包=5&#10;件=20"></textarea>
-        <div class="text-xs text-gray-400 mt-1">最小单位倍数固定为 1；如 1.5kg*5袋，填“包=5”。销售时可切换按袋/包/件卖，库存和成本自动折算。</div>
+        <label class="block mb-1">最小单位单价（系统自动换算，无需手算）</label>
+        <input id="editGoodsPrice" type="number" step="0.0001" min="0" class="border w-full px-3 py-2 bg-gray-100 text-gray-600" readonly>
+        <div id="editGoodsCaseHint" class="text-xs text-gray-400 mt-1">整件价 ÷ 每整件含最小单位数量 = 最小单位单价</div>
+      </div>
+      <div>
+        <label class="block mb-1">包装单位换算（每行一个，格式：单位=倍数；倍数都按最小单位算）</label>
+        <textarea id="editGoodsUnits" rows="3" class="border w-full px-3 py-2" placeholder="包=5&#10;件=20" oninput="syncEditGoodsPrice()"></textarea>
+        <div class="text-xs text-gray-400 mt-1">最小单位倍数固定为 1；可填任意单位，如 袋=24、件=20、箱=120。销售时可切换按最小单位/袋/包/件/箱卖，库存和成本自动折算。</div>
       </div>
       <div>
         <label class="block mb-1">保质期（选定生产日期后自动推算到期日）</label>
@@ -1180,3 +1185,6 @@
 <script src="./app.js?v=20261117x"></script>
 </body>
 </html>
+
+
+

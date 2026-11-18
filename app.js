@@ -2088,6 +2088,45 @@ function parseUnitsForm(text) {
   }).filter(function (u) { return u && u.factor > 1; });
 }
 
+function editGoodsCaseUnit(units) {
+  const base = ($('editGoodsUnit') ? $('editGoodsUnit').value : '').trim();
+  let best = null;
+  (units || parseUnitsForm($('editGoodsUnits') ? $('editGoodsUnits').value : '')).forEach(function (u) {
+    if (u.unit === base) return;
+    if (!best || Number(u.factor) > Number(best.factor)) best = u;
+  });
+  return best;
+}
+
+function editGoodsCaseFactor(units) {
+  const unit = editGoodsCaseUnit(units);
+  return unit ? Number(unit.factor) : 1;
+}
+
+function syncEditGoodsPrice() {
+  const caseInput = $('editGoodsCasePrice');
+  const minInput = $('editGoodsPrice');
+  const hint = $('editGoodsCaseHint');
+  if (!caseInput || !minInput || !hint) return;
+  const units = parseUnitsForm($('editGoodsUnits') ? $('editGoodsUnits').value : '');
+  const base = ($('editGoodsUnit') ? $('editGoodsUnit').value : '').trim();
+  const factor = editGoodsCaseFactor(units);
+  const caseText = String(caseInput.value || '').trim();
+  if (caseText === '') {
+    minInput.value = '';
+  } else {
+    const value = Number(caseText);
+    minInput.value = Number.isFinite(value)
+      ? String(Math.round(value / factor * 10000) / 10000)
+      : '';
+  }
+  const baseLine = units.filter(function (u) { return u.unit === base; })[0];
+  hint.className = 'text-xs mt-1 ' + (baseLine ? 'text-red-500' : 'text-gray-400');
+  hint.textContent = baseLine
+    ? '“' + base + '”已经是最小单位，不能再用“' + base + '=' + Number(baseLine.factor) + '”当整件；请把最小单位改成袋/包/kg 等更小单位。'
+    : '1 整件 = ' + factor + ' 个「' + (base || '最小单位') + '」，最小单位单价 = 整件价 ÷ ' + factor;
+}
+
 function renderGoodsManage() {
   const tbody = $('goodsTableBody');
   if (!tbody) return;
@@ -2161,11 +2200,16 @@ async function addGoods() {
 }
 
 let goodsModalReturnFocus = null;
+let goodsEditDefaults = { sale: '', purchase: '' };
 
 function openGoodsEdit(id) {
   const goods = findGoodsById(id);
   if (!goods) return;
   goodsModalReturnFocus = document.activeElement;
+  goodsEditDefaults = {
+    sale: goods.default_sale_unit || goods.base_unit || goods.unit || '',
+    purchase: goods.default_purchase_unit || goods.base_unit || goods.unit || ''
+  };
   $('editGoodsId').value = goods.id;
   $('editGoodsCode').value = goods.code || '';
   $('editGoodsName').value = goods.name || '';
@@ -2175,7 +2219,15 @@ function openGoodsEdit(id) {
   const shelf = shelfPartsFromDays(goods.shelf_life_days);
   $('editGoodsShelfLife').value = shelf.value;
   $('editGoodsShelfUnit').value = shelf.unit;
-  $('editGoodsPrice').value = goods.default_price === null || goods.default_price === undefined ? '' : goods.default_price;
+  const basePrice = goods.default_price === null || goods.default_price === undefined ? '' : Number(goods.default_price);
+  const factor = editGoodsCaseFactor(goods.units);
+  const caseUnit = editGoodsCaseUnit(goods.units);
+  const existingCasePrice = caseUnit && caseUnit.price !== null && caseUnit.price !== undefined ? Number(caseUnit.price) : null;
+  $('editGoodsCasePrice').value = existingCasePrice !== null
+    ? existingCasePrice
+    : (basePrice === '' ? '' : Math.round(basePrice * factor * 100) / 100);
+  $('editGoodsPrice').value = basePrice;
+  syncEditGoodsPrice();
   const modal = $('goodsModal');
   modal.classList.remove('hidden');
   modal.classList.add('flex');
@@ -2199,7 +2251,18 @@ function closeGoodsModal() {
 
 async function saveGoodsEdit() {
   const id = Number($('editGoodsId').value);
-  const priceText = $('editGoodsPrice').value;
+  const caseText = String($('editGoodsCasePrice').value || '').trim();
+  const units = parseUnitsForm($('editGoodsUnits').value);
+  const baseUnit = $('editGoodsUnit').value.trim();
+  if (units.some(function (u) { return u.unit === baseUnit; })) {
+    return toast('“' + baseUnit + '”已是最小单位，不能再用它当整件；请把最小单位改成袋、包、kg 等更小单位', 'err');
+  }
+  const factor = editGoodsCaseFactor(units);
+  const casePrice = caseText === '' ? null : Number(caseText);
+  const minPrice = casePrice === null ? null : Math.round(casePrice / factor * 10000) / 10000;
+  units.forEach(function (u) {
+    u.price = minPrice === null ? null : Math.round(minPrice * Number(u.factor) * 10000) / 10000;
+  });
   try {
     await api('/goods/' + id, {
       method: 'PUT',
@@ -2209,14 +2272,16 @@ async function saveGoodsEdit() {
         spec: $('editGoodsSpec').value.trim(),
         unit: $('editGoodsUnit').value.trim(),
         base_unit: $('editGoodsUnit').value.trim(),
-        units: parseUnitsForm($('editGoodsUnits').value),
+        default_sale_unit: goodsEditDefaults.sale,
+        default_purchase_unit: goodsEditDefaults.purchase,
+        units: units,
         shelf_life_days: shelfDaysFromInput($('editGoodsShelfLife').value, $('editGoodsShelfUnit').value),
-        default_price: priceText === '' ? null : Number(priceText)
+        default_price: minPrice
       }
     });
     closeGoodsModal();
     await refreshGoods();
-    toast('商品信息已保存', 'ok');
+    toast('商品建议价已保存；客户价格记忆未改动', 'ok');
   } catch (err) { toast(err.message, 'err'); }
 }
 
