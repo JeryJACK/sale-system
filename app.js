@@ -810,12 +810,12 @@ function saleUnitPrice(row, unitName) {
 function unitSelectHtml(row, index, dis) {
   const units = row.units || [];
   if (!units.length) {
-    return '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50" list="unitOptions" placeholder="单位" value="' + esc(row.unit) + '" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>';
+    return '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" list="unitOptions" placeholder="单位" value="' + esc(row.unit) + '" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>';
   }
-  return '<select class="w-full min-w-0 border px-1 py-1 bg-gray-50" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +
+  return '<select class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +
     units.map(function (u) {
       return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
-        esc(u.unit) + (Number(u.factor) > 1 ? '（×' + Number(u.factor) + '）' : '') + '</option>';
+        esc(u.unit) + (Number(u.factor) > 1 ? '×' + Number(u.factor) : '') + '</option>';
     }).join('') + '</select>';
 }
 
@@ -827,7 +827,7 @@ function purchaseUnitSelectHtml(row, index) {
   return '<select class="w-full border px-1 py-1" onchange="onPurchaseUnitCommit(' + index + ',this.value)">' +
     units.map(function (u) {
       return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
-        esc(u.unit) + (Number(u.factor) > 1 ? '（×' + Number(u.factor) + '）' : '') + '</option>';
+        esc(u.unit) + (Number(u.factor) > 1 ? '×' + Number(u.factor) : '') + '</option>';
     }).join('') + '</select>';
 }
 
@@ -861,8 +861,8 @@ function renderSellTable() {
       '<div class="price-history" id="priceHint_' + index + '" title="' + esc(historyTitle(row)) + '">' + esc(historyText(row)) + '</div>' +
       '</td>' +
       '<td><input class="w-full border px-1 py-1 bg-gray-50" readonly value="' + money(row.amount) + '"></td>' +
-      '<td><input type="date" class="w-full border px-1 py-1" value="' + esc(row.makeDate) + '" onchange="updateMakeDate(' + index + ',this.value)"' + dis + '></td>' +
-      '<td><input type="date" class="w-full border px-1 py-1" value="' + esc(row.expDate) + '" onchange="updateExpireDate(' + index + ',this.value)"' + dis + '></td>' +
+      '<td><input type="date" class="w-full border px-1 py-1 text-xs" value="' + esc(row.makeDate) + '" onchange="updateMakeDate(' + index + ',this.value)"' + dis + '></td>' +
+      '<td><input type="date" class="w-full border px-1 py-1 text-xs" value="' + esc(row.expDate) + '" onchange="updateExpireDate(' + index + ',this.value)"' + dis + '></td>' +
       '<td><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.remark) + '" placeholder="备注" oninput="sellRows[' + index + '].remark=this.value"' + dis + '></td>' +
       '<td></td></tr>';
   }).join('');
