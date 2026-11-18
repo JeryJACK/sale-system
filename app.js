@@ -1163,11 +1163,19 @@ function unitPrice(row, unitName) {
 /* 包装单位显示完整规格：400g + 件(40倍/袋) => 400g*40袋 */
 function displaySpec(row) {
   const spec = String(row.spec || '').trim();
-  if (!spec || spec.indexOf('*') >= 0 || spec.indexOf('×') >= 0 || spec.indexOf('/') >= 0) return spec;
-  const unit = (row.units || []).find(function (u) { return u.unit === row.unit; });
-  const factor = Number((unit && unit.factor) || 1);
+  if (!spec || spec.indexOf('*') >= 0 || spec.indexOf('×') >= 0) return spec;
+  const unitName = String(row.unit || '').trim();
   const baseUnit = row.baseUnit || ((row.units || []).find(function (u) { return u.is_base; }) || {}).unit || '';
-  if (baseUnit && spec.toLowerCase().slice(-baseUnit.length).toLowerCase() === baseUnit.toLowerCase()) return spec;
+  const slashIndex = spec.indexOf('/');
+  if (slashIndex >= 0) {
+    const specUnit = spec.slice(slashIndex + 1).trim();
+    if (unitName && specUnit === unitName) return spec;
+    if (unitName && baseUnit && unitName === baseUnit) return '';
+    return spec;
+  }
+  if (baseUnit && spec.toLowerCase().slice(-baseUnit.length) === baseUnit.toLowerCase()) return spec;
+  const unit = (row.units || []).find(function (u) { return u.unit === unitName; });
+  const factor = Number((unit && unit.factor) || 1);
   if (factor > 1 && baseUnit) {
     return spec + '*' + String(factor) + baseUnit;
   }
