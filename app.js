@@ -24,6 +24,7 @@ let specCache = {};             // 品名+客户 -> 规格列表（含该客户�
 let batchTargetRow = null;
 let editingOrder = null;
 let editingOrderId = null;
+let printSaving = false;
 let purchaseRows = [];
 let purchaseNo = '';
 let stockConfig = { mode: 'weight', strategy: 'fifo', allow_negative: false, close_month: '' };
@@ -2558,9 +2559,14 @@ async function voidCurrentOrder() {
 }
 
 
-async function saveSellOrder() {
-  if (editingOrderId && isOrderLocked()) return toast('订单已作废，不能再修改', 'err');
-  const customerName = $('sellCustomerInput').value.trim();
+async function saveSellOrder(opts) {
+  opts = opts || {};
+  const keepPage = !!opts.keepPage;
+  const silent = !!opts.silent;
+  const silentUI = !!opts.silentUI;
+  const wasEditing = !!editingOrderId;
+  if (editingOrderId && isOrderLocked()) return null;
+  const customerName = $('sellCustomerInput').value.trim() || (opts.allowWalkIn ? '散客' : '');
   if (!customerName) return toast('请填写客户名称', 'err');
   const matchedCustomer = currentCustomer || customers.find(function (c) {
     return String(c.customer_no) === customerName || c.name === customerName;
@@ -2587,7 +2593,7 @@ async function saveSellOrder() {
   });
 
   const button = $('btnSaveOrder');
-  if (button) { button.disabled = true; button.textContent = '保存中…'; }
+  if (button && !silentUI) { button.disabled = true; button.textContent = '保存中…'; }
   try {
     if (editingOrderId) {
       const updated = await api('/orders/' + editingOrderId, {
@@ -2599,9 +2605,10 @@ async function saveSellOrder() {
           items: items
         }
       });
-      toast('订单修改已保存，金额 ￥' + money(updated.total_amount), 'ok');
-      await startEditOrder(editingOrderId);
-      return;
+      editingOrder = updated || editingOrder;
+      if (!silent) toast('订单修改已保存，金额 ￥' + money(updated.total_amount), 'ok');
+      if (!keepPage) await startEditOrder(editingOrderId);
+      return updated;
     }
 
     const typedNo = $('custNo').value.trim();
@@ -2620,21 +2627,34 @@ async function saveSellOrder() {
       items: items
     };
     const order = await api('/orders', { method: 'POST', body: payload });
-    toast('单据保存成功，金额 ￥' + money(order.total_amount), 'ok');
     await refreshCustomers();
+    if (keepPage) {
+      // 打印前自动保存：保留当前单据页面，转为已保存订单，避免重复保存
+      editingOrderId = order.id;
+      editingOrder = order;
+      $('sellOrderNo').value = order.order_no || $('sellOrderNo').value;
+      if (!silent) toast('单据已保存，金额 ￥' + money(order.total_amount), 'ok');
+      if (!silentUI) setSaleModeUI();
+      return order;
+    }
+    toast('单据保存成功，金额 ￥' + money(order.total_amount), 'ok');
     const savedCustomerId = order.user_id;
     clearSellForm();
     if (savedCustomerId) {
       const customer = findCustomer(savedCustomerId);
       if (customer) await selectCustomer(customer);
     }
+    return order;
   } catch (err) {
     toast(err.message, 'err');
     if (String(err.message).indexOf('订单号') >= 0) refreshOrderNo();
+    return null;
   } finally {
-    if (button) button.disabled = false;
-    setSaleModeUI();
-    if (button) button.textContent = editingOrderId ? '保存修改' : '保存单据';
+    if (button) {
+      button.disabled = false;
+      button.textContent = wasEditing ? '保存修改' : '保存单据';
+    }
+    if (!silentUI) setSaleModeUI();
   }
 }
 
@@ -2659,6 +2679,17 @@ function clearSellForm() {
   $('custTel').value = '';
   renderSellTable();
   refreshOrderNo();
+}
+
+/* 打印完成后自动开新单：清空客户、明细、备注，并退出上一单编辑态 */
+function resetSaleAfterPrint() {
+  closePrintPreview();
+  if (editingOrderId || editingOrder) {
+    exitOrderEdit();
+  } else {
+    clearSellForm();
+  }
+  setSaleModeUI();
 }
 
 /* ==================== 订单列表 / 明细 ==================== */
@@ -4674,7 +4705,18 @@ function rmbUpper(n) {
   return (neg ? '负' : '') + out;
 }
 
-function printSellBill() {
+async function printSellBill() {
+  if (printSaving) return;
+  printSaving = true;
+  try {
+    // 打印前自动保存：新单未点“保存单据”也先入库，避免打印后清空导致单据丢失
+    if (!(editingOrderId && isOrderLocked())) {
+      const saved = await saveSellOrder({ keepPage: true, silent: true, silentUI: true, allowWalkIn: true });
+      if (!saved || typeof saved !== 'object') return;
+    }
+  } finally {
+    printSaving = false;
+  }
   const validRows = sellRows.filter(function (row) {
     return row.pid && Number(row.qty) > 0 && Number(row.price) > 0;
   });
@@ -4828,12 +4870,18 @@ async function doPrint() {
 
   closePrintPreview();
   setTimeout(function () { window.print(); }, 60);
+  setTimeout(resetSaleAfterPrint, 400);
 }
 
 /* ==================== 启动 ==================== */
 function boot() {
   bindMenuClick();
   bindCustomerInput();
+  if (window.billingDesktop && window.billingDesktop.onPrintCompleted) {
+    window.billingDesktop.onPrintCompleted(function () {
+      resetSaleAfterPrint();
+    });
+  }
   $('sellDate').value = todayStr();
   applyPaper(currentPaper, false);
   $('loginApiBase').value = getApiBase() || 'http://127.0.0.1:8000/api';
