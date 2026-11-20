@@ -69,6 +69,67 @@ function todayStr() {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
+let confirmResolver = null;
+
+function restoreDesktopWindowFocus() {
+  if (window.billingDesktop && window.billingDesktop.focusMainWindow) {
+    try {
+      const p = window.billingDesktop.focusMainWindow();
+      if (p && p.catch) p.catch(function () {});
+    } catch (err) { /* 非桌面端忽略 */ }
+  }
+}
+
+function askConfirm(message, options) {
+  options = options || {};
+  const modal = $('confirmModal');
+  if (!modal) return Promise.resolve(window.confirm(message));
+  if (confirmResolver) {
+    const previous = confirmResolver;
+    confirmResolver = null;
+    previous(false);
+  }
+  return new Promise(function (resolve) {
+    confirmResolver = resolve;
+    $('confirmMessage').textContent = message;
+    $('confirmOk').textContent = options.confirmText || '确定';
+    $('confirmCancel').textContent = options.cancelText || '取消';
+    $('confirmCancel').classList.toggle('hidden', !!options.okOnly);
+    $('confirmOk').className = 'px-4 py-1.5 rounded text-sm text-white ' +
+      (options.danger === false ? 'bg-primaryBlue hover:bg-blue-600' : 'bg-red-500 hover:bg-red-600');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+
+    function finish(value) {
+      if (!confirmResolver) return;
+      confirmResolver = null;
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      document.removeEventListener('keydown', onKey, true);
+      restoreDesktopWindowFocus();
+      resolve(value);
+    }
+    function onKey(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      } else if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault();
+        finish(true);
+      }
+    }
+    $('confirmOk').onclick = function () { finish(true); };
+    $('confirmCancel').onclick = function () { finish(false); };
+    modal.onclick = function (event) { if (event.target === modal) finish(false); };
+    document.addEventListener('keydown', onKey, true);
+    setTimeout(function () { $('confirmOk').focus(); }, 0);
+  });
+}
+
+function askAlert(message) {
+  return askConfirm(message, { okOnly: true, confirmText: '知道了', danger: false });
+}
+
 function toast(message, type) {
   const wrap = $('toastWrap');
   if (!wrap) return;
@@ -640,7 +701,12 @@ function switchPage(pageName, keepOrderEdit) {
     exitOrderEdit();
   }
   // 切页时把可能残留的弹窗层收掉，避免透明遮罩盖住新页面导致“鼠标点了没反应”。
-  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'accountModal', 'purchaseDetailModal', 'printPreviewModal'].forEach(function (id) {
+  if (confirmResolver) {
+    const pendingConfirm = confirmResolver;
+    confirmResolver = null;
+    pendingConfirm(false);
+  }
+  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'accountModal', 'purchaseDetailModal', 'printPreviewModal', 'confirmModal'].forEach(function (id) {
     const modal = $(id);
     if (modal && !modal.classList.contains('hidden')) {
       modal.classList.add('hidden');
@@ -660,6 +726,9 @@ function switchPage(pageName, keepOrderEdit) {
   const target = $('page-' + pageName);
   if (target) target.classList.remove('hidden');
   const focusWasHidden = releaseHiddenFocus();
+  // 桌面端切页后把主窗口重新拉回前台并让 webContents 取得键盘焦点，
+  // 防止原生确认框关闭后窗口失焦，表现为“所有输入框都点不进去、打不了字”。
+  restoreDesktopWindowFocus();
 
   // 商品和客户资料在登录时已加载，并会在新增/修改/导入后主动刷新。
   // 这里不再每次切页都重新拉全量数据并重绘商品表/客户表，否则几百条数据会
@@ -961,7 +1030,7 @@ async function saveAccount() {
 async function toggleAccountActive(staffId, active) {
   const row = staffAccountsCache.find(function (x) { return x.id === staffId; });
   if (!row) return;
-  if (!confirm((active ? '启用' : '停用') + '账号“' + row.username + '”？')) return;
+  if (!(await askConfirm((active ? '启用' : '停用') + '账号“' + row.username + '”？'))) return;
   try {
     await api('/staff/' + staffId, { method: 'PUT', body: { is_active: active } });
     await loadStaffAccounts();
@@ -1133,7 +1202,7 @@ async function saveCustomerEdit() {
 async function deleteCustomer(id) {
   const customer = findCustomer(id);
   if (!customer) return;
-  if (!confirm('确定停用客户“' + customer.name + '”？停用后不会再出现在打单搜索中，历史订单不受影响。')) return;
+  if (!(await askConfirm('确定停用客户“' + customer.name + '”？停用后不会再出现在打单搜索中，历史订单不受影响。'))) return;
   try {
     await api('/customers/' + encodeURIComponent(id), { method: 'DELETE' });
     if (currentCustomer && String(currentCustomer.id) === String(id)) {
@@ -2884,8 +2953,8 @@ async function batchDeleteGoods() {
     return g ? g.code + ' ' + g.name : String(id);
   });
   const preview = names.slice(0, 6).join('、') + (names.length > 6 ? ' 等 ' + names.length + ' 个' : '');
-  if (!confirm('确定删除以下商品？\n' + preview +
-    '\n\n没有历史单据的商品会彻底删除并释放编码；有历史单据的商品只停用，编码和单据保留。')) return;
+  if (!(await askConfirm('确定删除以下商品？\n' + preview +
+    '\n\n没有历史单据的商品会彻底删除并释放编码；有历史单据的商品只停用，编码和单据保留。'))) return;
   const button = $('batchDeleteGoodsBtn');
   if (button) { button.disabled = true; button.textContent = '删除中…'; }
   try {
@@ -2897,7 +2966,7 @@ async function batchDeleteGoods() {
     if (result.errors && result.errors.length) parts.push('失败 ' + result.errors.length + ' 个');
     toast(parts.join('，') || '没有商品被处理', result.errors && result.errors.length ? 'err' : 'ok');
     if (result.errors && result.errors.length) {
-      alert('以下商品删除失败：\n' + result.errors.slice(0, 10).map(function (item) {
+      await askAlert('以下商品删除失败：\n' + result.errors.slice(0, 10).map(function (item) {
         return 'ID ' + item.id + '：' + item.error;
       }).join('\n'));
     }
@@ -3051,7 +3120,7 @@ async function saveGoodsEdit() {
 async function deleteGoods(id) {
   const goods = findGoodsById(id);
   if (!goods) return;
-  if (!confirm('确定删除商品“' + goods.name + '”？\n没有历史单据的会彻底删除并释放编码；有历史单据的只停用、编码保留。')) return;
+  if (!(await askConfirm('确定删除商品“' + goods.name + '”？\n没有历史单据的会彻底删除并释放编码；有历史单据的只停用、编码保留。'))) return;
   try {
     const result = await api('/goods/' + id, { method: 'DELETE' });
     await refreshGoods();
@@ -3309,7 +3378,7 @@ function backToOrderList() {
 
 async function voidCurrentOrder() {
   if (!editingOrderId || isOrderLocked()) return;
-  if (!confirm('确定作废订单“' + editingOrder.order_no + '”？作废后保留单据但不可再编辑。')) return;
+  if (!(await askConfirm('确定作废订单“' + editingOrder.order_no + '”？作废后保留单据但不可再编辑。'))) return;
   try {
     await api('/orders/' + editingOrderId + '/void', { method: 'POST' });
     toast('订单已作废', 'ok');
@@ -3537,8 +3606,8 @@ async function runBatchOrderAction(action) {
   if (!ids.length) return toast('请先勾选要处理的订单', 'err');
   const isVoid = action === 'void';
   const label = isVoid ? '作废' : '退货';
-  if (!confirm('确定批量' + label + '选中的 ' + ids.length + ' 张订单？' +
-      (isVoid ? '作废后库存和统计会回滚，单据保留但不可再编辑。' : '原单保留，系统会生成退货单并冲减营业额与利润。'))) return;
+  if (!(await askConfirm('确定批量' + label + '选中的 ' + ids.length + ' 张订单？' +
+      (isVoid ? '作废后库存和统计会回滚，单据保留但不可再编辑。' : '原单保留，系统会生成退货单并冲减营业额与利润。')))) return;
   try {
     const data = await api('/orders/batch', { method: 'POST', body: { ids: ids, action: action } });
     let message = '批量' + label + '完成：成功 ' + data.processed + ' 单';
@@ -4631,7 +4700,7 @@ async function loadPurchases() {
 }
 
 async function voidPurchase(id) {
-  if (!confirm('确定作废这笔进货单？批次模式会检查批次是否已出库，加权模式会回冲成本。')) return;
+  if (!(await askConfirm('确定作废这笔进货单？批次模式会检查批次是否已出库，加权模式会回冲成本。'))) return;
   try {
     await api('/purchases/' + id + '/void', { method: 'POST' });
     toast('进货单已作废', 'ok');
@@ -4756,7 +4825,7 @@ function loadMemoGoodsSelect() {
 
 async function clearDateMemo(all) {
   if (all) {
-    if (!confirm('确定清除全部商品的效期记忆？此操作不可恢复。')) return;
+    if (!(await askConfirm('确定清除全部商品的效期记忆？此操作不可恢复。'))) return;
     try {
       const data = await api('/goods/date-memo', { method: 'DELETE' });
       toast('已清除 ' + data.deleted + ' 条效期记忆', 'ok');
