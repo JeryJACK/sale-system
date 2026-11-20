@@ -14,6 +14,7 @@ let shopInfo = { name: '', addr: '', tel: '' };
 let customers = [];
 let goodsList = [];
 let priceMap = {};              // goods_id -> {price, history, ...}（当前客户）
+let printPrefMap = {};          // goods_id -> true：该客户打印这张商品时隐藏规格
 let currentCustomer = null;
 let sellRows = [];
 let currentEditRowIndex = null;
@@ -182,6 +183,97 @@ async function fetchAll(path, pageSize) {
   return all;
 }
 
+/* ==================== 开单输入审计（只写后端日志，无界面） ==================== */
+let auditQueue = [];
+let auditFlushTimer = null;
+let auditDebounceTimer = null;
+let auditFlushing = false;
+
+function auditSessionId() {
+  try {
+    let id = sessionStorage.getItem('billing_audit_session');
+    if (!id) {
+      id = 's' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem('billing_audit_session', id);
+    }
+    return id;
+  } catch (err) {
+    return 's' + Date.now().toString(36);
+  }
+}
+
+function auditRowSnapshot(row, index) {
+  return {
+    row_index: index,
+    goods_id: row.goods_id || null,
+    goods_code: row.pid || '',
+    goods_name: row.pname || '',
+    spec: row.spec || '',
+    unit: row.unit || '',
+    qty: Number(row.qty) || 0,
+    price: Number(row.price) || 0,
+    amount: Number(row.amount) || 0,
+    hide_spec: !!row.hideSpec,
+    valid: !!(row.pid && Number(row.qty) > 0 && Number(row.price) > 0),
+    stock_id: row.stock_id || null,
+    make_date: row.makeDate || '',
+    exp_date: row.expDate || '',
+    remark: row.remark || ''
+  };
+}
+
+function auditRowsSnapshot() {
+  return sellRows.map(function (row, index) { return auditRowSnapshot(row, index); });
+}
+
+function auditOrder(action, extra) {
+  if (!token) return;
+  const event = Object.assign({
+    action: action,
+    order_no: ($('sellOrderNo') && $('sellOrderNo').value) || '',
+    client_time: new Date().toISOString()
+  }, extra || {});
+  auditQueue.push(event);
+  if (auditQueue.length > 200) auditQueue.splice(0, auditQueue.length - 200);
+  if (auditQueue.length >= 8) {
+    flushOrderAudit();
+  } else {
+    clearTimeout(auditFlushTimer);
+    auditFlushTimer = setTimeout(flushOrderAudit, 800);
+  }
+}
+
+async function flushOrderAudit() {
+  clearTimeout(auditFlushTimer);
+  auditFlushTimer = null;
+  if (auditFlushing) {
+    await new Promise(function (resolve) { setTimeout(resolve, 120); });
+    return flushOrderAudit();
+  }
+  if (!auditQueue.length) return;
+  auditFlushing = true;
+  const batch = auditQueue.splice(0, 50);
+  try {
+    await api('/order-input-logs', {
+      method: 'POST',
+      body: { session_id: auditSessionId(), events: batch }
+    });
+  } catch (err) {
+    // 审计失败不能影响开单，也不能弹错误打扰操作员
+    console.warn('开单审计日志写入失败：', err.message);
+  } finally {
+    auditFlushing = false;
+    if (auditQueue.length) setTimeout(flushOrderAudit, 300);
+  }
+}
+
+function scheduleAudit(action, extra, delay) {
+  clearTimeout(auditDebounceTimer);
+  auditDebounceTimer = setTimeout(function () {
+    auditOrder(action, Object.assign({ detail: { rows: auditRowsSnapshot() } }, extra || {}));
+  }, delay || 900);
+}
+
 function buildQuery(obj) {
   const params = new URLSearchParams();
   Object.keys(obj).forEach(function (key) {
@@ -238,6 +330,7 @@ function doLogout() {
   customers = [];
   goodsList = [];
   priceMap = {};
+  printPrefMap = {};
   currentCustomer = null;
   sellRows = [];
   showLogin('');
@@ -639,6 +732,7 @@ async function deleteCustomer(id) {
     if (currentCustomer && String(currentCustomer.id) === String(id)) {
       currentCustomer = null;
       priceMap = {};
+      printPrefMap = {};
       $('sellCustomerInput').value = '';
       $('custNo').value = '';
     }
@@ -699,6 +793,7 @@ function bindCustomerInput() {
 function clearCurrentCustomer() {
   currentCustomer = null;
   priceMap = {};
+  printPrefMap = {};
   $('custNo').value = '';
   $('customerPriceTip').classList.add('hidden');
   sellRows.forEach(function (row, index) {
@@ -711,7 +806,11 @@ function clearCurrentCustomer() {
     }
     row.specFor = '';
     row.specOptions = [];
+    row.hideSpec = false;
+    row.hideSpecTouched = false;
+    row.hideSpecGoodsId = null;
   });
+  renderSellTable();
 }
 
 async function selectCustomer(customer) {
@@ -727,8 +826,25 @@ async function selectCustomer(customer) {
   $('custAddr').value = customer.addr || '';
   $('custTel').value = customer.tel || '';
   $('customerDropdown').classList.add('hidden');
-  await loadCustomerPrices(customer.id);
+  await Promise.all([loadCustomerPrices(customer.id), loadCustomerPrintPrefs(customer.id)]);
+  sellRows.forEach(function (row) {
+    row.hideSpecGoodsId = null;
+    row.hideSpecTouched = false;
+  });
   applyPricesForCustomer();
+  renderSellTable();
+}
+
+async function loadCustomerPrintPrefs(customerId) {
+  printPrefMap = {};
+  try {
+    const data = await api('/customers/' + encodeURIComponent(customerId) + '/print-prefs');
+    (data.items || []).forEach(function (item) {
+      printPrefMap[Number(item.goods_id)] = !!item.hide_spec;
+    });
+  } catch (err) {
+    toast('加载打印隐藏记忆失败：' + err.message, 'err');
+  }
 }
 
 async function loadCustomerPrices(customerId) {
@@ -765,6 +881,7 @@ function newRow() {
     qty: 1, price: '', priceAuto: false, amount: 0,
     makeDate: '', expDate: '', remark: '', stock_id: null,
     shelfLifeDays: 0, expireManual: false, history: [], defaultPrice: null,
+    hideSpec: false, hideSpecTouched: false, hideSpecGoodsId: null,
     specOptions: [], specFor: '', specBusy: false
   };
 }
@@ -775,15 +892,18 @@ function addRow() {
   closeSpecSuggest();
   sellRows.push(newRow());
   renderSellTable();
+  auditOrder('row_add', { row_index: sellRows.length - 1, detail: { rows: auditRowsSnapshot() } });
 }
 
 function delRow(index) {
   if (isOrderLocked()) return;
   closeNameSuggest();
   closeSpecSuggest();
+  const removed = sellRows[index] ? auditRowSnapshot(sellRows[index], index) : null;
   sellRows.splice(index, 1);
   if (!sellRows.length) sellRows.push(newRow());
   renderSellTable();
+  auditOrder('row_delete', { row_index: index, detail: { removed: removed, rows: auditRowsSnapshot() } });
 }
 
 function rowPriceFactor(row) {
@@ -864,15 +984,106 @@ function purchaseUnitSelectHtml(row, index) {
     units.map(function (u) {
       return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
         esc(u.unit) + '</option>';
-    }).join('') + '</select>';
+    }).join('') + '</select>' +
+    '<div class="purchase-base-hint text-[10px] leading-tight text-gray-500 mt-0.5"></div>';
+}
+
+function purchaseBaseHint(row) {
+  const units = row.units || [];
+  const unit = String(row.unit || '');
+  const base = String(row.baseUnit || '');
+  if (!unit || !base) return '';
+  const info = units.filter(function (u) { return u.unit === unit; })[0];
+  if (!info) {
+    return units.length > 1 ? '未配置「' + unit + '」换算，不能开单' : '';
+  }
+  const factor = Number(info.factor || 1);
+  if (factor <= 1) return '';
+  const price = Number(row.price || 0);
+  const text = '1' + unit + '=' + (Math.round(factor * 10000) / 10000) + base;
+  return price > 0
+    ? text + '，折合 ' + (Math.round(price / factor * 10000) / 10000) + ' 元/' + base
+    : text;
+}
+
+function reconcilePrintPref(row) {
+  const goodsId = row && row.goods_id ? Number(row.goods_id) : null;
+  if (!goodsId) {
+    row.hideSpec = false;
+    row.hideSpecTouched = false;
+    row.hideSpecGoodsId = null;
+    return;
+  }
+  if (row.hideSpecGoodsId !== null && String(row.hideSpecGoodsId) === String(goodsId)) return;
+  row.hideSpecGoodsId = goodsId;
+  row.hideSpecTouched = false;
+  row.hideSpec = !!printPrefMap[goodsId];
+}
+
+async function togglePrintSpec(index, checked) {
+  const row = sellRows[index];
+  if (!row || !row.goods_id) return toast('请先选择商品，再设置是否打印规格', 'err');
+  if (!currentCustomer || !currentCustomer.id) return toast('请先选择客户，系统要按“客户 + 商品”记住这个设置', 'err');
+  if (isOrderLocked()) return toast('这张单据已锁定，不能再改打印规格设置', 'err');
+  const previous = !!row.hideSpec;
+  const hide = typeof checked === 'boolean' ? !checked : !previous;
+  row.hideSpec = hide;
+  row.hideSpecTouched = true;
+  row.hideSpecGoodsId = row.goods_id;
+  sellRows.forEach(function (item) {
+    if (item.goods_id && String(item.goods_id) === String(row.goods_id)) {
+      item.hideSpec = hide;
+      item.hideSpecTouched = true;
+      item.hideSpecGoodsId = item.goods_id;
+    }
+  });
+  renderSellTable();
+  try {
+    await api('/customers/' + encodeURIComponent(currentCustomer.id) + '/print-pref', {
+      method: 'PUT',
+      body: { goods_id: row.goods_id, hide_spec: hide }
+    });
+    printPrefMap[Number(row.goods_id)] = hide;
+    toast(hide
+      ? '已记住：这个客户以后打印“' + row.pname + '”时不显示规格'
+      : '已恢复：这个客户以后打印“' + row.pname + '”时显示规格', 'ok');
+  } catch (err) {
+    sellRows.forEach(function (item) {
+      if (item.goods_id && String(item.goods_id) === String(row.goods_id)) item.hideSpec = previous;
+    });
+    renderSellTable();
+    toast('保存打印隐藏设置失败：' + err.message, 'err');
+  }
+}
+
+function specEyeIcon(hidden) {
+  if (hidden) {
+    return '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">' +
+      '<path d="M2 12s3.8-6.5 10-6.5S22 12 22 12s-3.8 6.5-10 6.5S2 12 2 12Z"></path>' +
+      '<circle cx="12" cy="12" r="2.8"></circle>' +
+      '<path d="M4 3.5 20 20.5"></path></svg>';
+  }
+  return '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">' +
+    '<path d="M2 12s3.8-6.5 10-6.5S22 12 22 12s-3.8 6.5-10 6.5S2 12 2 12Z"></path>' +
+    '<circle cx="12" cy="12" r="2.8"></circle></svg>';
 }
 
 function renderSellTable() {
   const tbody = $('sellTableBody');
   const dis = isOrderLocked() ? ' disabled' : '';
   tbody.innerHTML = sellRows.map(function (row, index) {
+    reconcilePrintPref(row);
     const ro = row.goods_id ? ' readonly' : '';
-    return '<tr class="border-b">' +
+    const specHidden = row.hideSpec ? ' spec-hidden' : '';
+    const locked = isOrderLocked();
+    const canPref = !!(row.goods_id && currentCustomer && currentCustomer.id && !locked);
+    const eyeDisabled = canPref ? '' : ' disabled';
+    const eyeTitle = !row.goods_id
+      ? '请先选择商品'
+      : (!currentCustomer || !currentCustomer.id
+        ? '请先选择客户'
+        : (locked ? '单据已锁定' : (row.hideSpec ? '打印规格已隐藏，点击恢复显示' : '打印时显示规格，点击隐藏')));
+    return '<tr class="border-b' + (row.hideSpec ? ' print-spec-hidden-row' : '') + '">' +
       '<td class="text-center"><button onclick="delRow(' + index + ')" class="text-red-500 text-lg leading-none" title="删除本行"' + dis + '>－</button></td>' +
       '<td><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码（点此选择）" ' +
       'oninput="sellRows[' + index + '].pid=this.value" onchange="onPidChange(' + index + ')" ' +
@@ -882,9 +1093,10 @@ function renderSellTable() {
       '<td class="relative name-cell"><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（输入联想）" oninput="onPnameInput(' + index + ',this.value)" onkeydown="onNameKeydown(event,' + index + ')"' + dis + '>' +
       '<div class="name-suggest hidden fixed bg-white border shadow-lg z-50 max-h-64 overflow-auto text-xs" onscroll="onNameScroll(event,' + index + ')"></div></td>' +
       '<td class="relative spec-cell">' +
-      '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50" value="' + esc(displaySpec(row)) + '" placeholder="点此选择/输入规格" ' +
+      '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50 spec-input-with-eye' + specHidden + '" value="' + esc(displaySpec(row)) + '" placeholder="点此选择/输入规格" title="' + (row.hideSpec ? '打印时该行规格留空（已按客户记忆）' : '') + '" ' +
       'oninput="onSpecInput(' + index + ',this.value)" onfocus="openSpecSuggest(' + index + ')" ' +
       'onkeydown="onSpecKeydown(event,' + index + ')" onblur="onSpecBlur(' + index + ',event)"' + dis + '>' +
+      '<button type="button" class="spec-eye-btn' + (row.hideSpec ? ' is-hidden' : '') + '" title="' + eyeTitle + '" aria-label="' + eyeTitle + '" onclick="togglePrintSpec(' + index + ')"' + eyeDisabled + '>' + specEyeIcon(row.hideSpec) + '</button>' +
       '<div class="spec-suggest hidden fixed bg-white border shadow-lg z-50 max-h-56 overflow-auto text-xs"></div></td>' +
       '<td>' + unitSelectHtml(row, index, dis) + '</td>' +
       '<td><input type="number" step="0.01" min="0" class="w-full border px-1 py-1" value="' + esc(row.qty) + '" placeholder="数量" oninput="updateQty(' + index + ',this.value)"' + dis + '></td>' +
@@ -897,7 +1109,7 @@ function renderSellTable() {
       '<td><input type="date" class="w-full border px-1 py-1 text-xs" value="' + esc(row.makeDate) + '" onchange="updateMakeDate(' + index + ',this.value)"' + dis + '></td>' +
       '<td><input type="date" class="w-full border px-1 py-1 text-xs" value="' + esc(row.expDate) + '" onchange="updateExpireDate(' + index + ',this.value)"' + dis + '></td>' +
       '<td><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.remark) + '" placeholder="备注" oninput="sellRows[' + index + '].remark=this.value"' + dis + '></td>' +
-      '<td></td></tr>';
+      '</tr>';
   }).join('');
   calcTotal();
 }
@@ -922,6 +1134,7 @@ function onPnameInput(index, value) {
   if (!row) return;
   const previous = row.pname;
   row.pname = value;
+  scheduleAudit('product_typing', { row_index: index, field: 'goods_name', value: value }, 1000);
   if (row.goods_id && value !== previous) {
     row.goods_id = null;
     row.pid = '';
@@ -1154,6 +1367,19 @@ async function onUnitCommit(index, value) {
   updatePriceCell(index);
   calcRowAmount(index);
   renderSellTable();
+  auditOrder('unit_changed', {
+    row_index: index,
+    field: 'unit',
+    value: row.unit,
+    goods_id: row.goods_id || null,
+    goods_code: row.pid || '',
+    goods_name: row.pname || '',
+    spec: row.spec || '',
+    unit: row.unit || '',
+    qty: Number(row.qty) || 0,
+    price: Number(row.price) || 0,
+    detail: { row: auditRowSnapshot(row, index) }
+  });
 }
 
 function priceForUnit(row, basePrice) {
@@ -1458,6 +1684,17 @@ function applySpecToRow(index, item) {
   row.unitChanged = false;
   renderSellTable();
   calcRowAmount(index);
+  auditOrder('spec_selected', {
+    row_index: index,
+    goods_id: row.goods_id || null,
+    goods_code: row.pid || '',
+    goods_name: row.pname || '',
+    spec: row.spec || '',
+    unit: row.unit || '',
+    qty: Number(row.qty) || 0,
+    price: Number(row.price) || 0,
+    detail: { row: auditRowSnapshot(row, index), rows: auditRowsSnapshot() }
+  });
   if (stockConfig.mode === 'batch') {
     openBatchPicker(index, { id: row.goods_id, code: row.pid, name: row.pname });
   } else {
@@ -1559,6 +1796,19 @@ async function onPriceCommit(index) {
   if (row.price === '' || row.price === null || row.price === undefined) return;
   const price = Number(row.price);
   if (!isFinite(price) || price < 0) return;
+  auditOrder('price_committed', {
+    row_index: index,
+    field: 'price',
+    value: row.price,
+    goods_id: row.goods_id,
+    goods_code: row.pid || '',
+    goods_name: row.pname || '',
+    spec: row.spec || '',
+    unit: row.unit || '',
+    qty: Number(row.qty) || 0,
+    price: price,
+    detail: { row: auditRowSnapshot(row, index) }
+  });
 
   if (!currentCustomer) {
     try {
@@ -1738,6 +1988,17 @@ function applyGoodsToRow(index, goods, opts) {
   applyCustomerPrice(index, true);
   renderSellTable();
   calcRowAmount(index);
+  auditOrder('goods_selected', {
+    row_index: index,
+    goods_id: row.goods_id || null,
+    goods_code: row.pid || '',
+    goods_name: row.pname || '',
+    spec: row.spec || '',
+    unit: row.unit || '',
+    qty: Number(row.qty) || 0,
+    price: Number(row.price) || 0,
+    detail: { row: auditRowSnapshot(row, index), rows: auditRowsSnapshot() }
+  });
   if (stockConfig.mode === 'batch') {
     openBatchPicker(index, goods);
   } else {
@@ -1855,6 +2116,7 @@ function updateQty(index, value) {
   if (!row) return;
   row.qty = value;
   calcRowAmount(index);
+  scheduleAudit('qty_typing', { row_index: index, field: 'qty', value: String(value) });
 }
 
 function updatePrice(index, value) {
@@ -1864,6 +2126,7 @@ function updatePrice(index, value) {
   row.priceUnit = row.unit;
   row.priceAuto = false;
   calcRowAmount(index);
+  scheduleAudit('price_typing', { row_index: index, field: 'price', value: String(value) });
 }
 
 function calcRowAmount(index) {
@@ -2159,6 +2422,7 @@ function renderGoodsManage() {
 
   tbody.innerHTML = list.length ? list.map(function (g) {
     return '<tr class="border-b hover:bg-blue-50">' +
+      '<td class="border px-2 py-1 text-center"><input type="checkbox" class="goods-row-check" value="' + g.id + '" onchange="updateGoodsSelection()"></td>' +
       '<td class="border px-2 py-1">' + esc(g.code) + '</td>' +
       '<td class="border px-2 py-1 font-medium">' + esc(g.name) + '</td>' +
       '<td class="border px-2 py-1">' + esc(g.spec || '-') + '</td>' +
@@ -2169,7 +2433,62 @@ function renderGoodsManage() {
       '<button onclick="openGoodsEdit(' + g.id + ')" class="text-gray-600 mr-2">编辑</button>' +
       '<button onclick="deleteGoods(' + g.id + ')" class="text-red-500">删除</button>' +
       '</td></tr>';
-  }).join('') : '<tr><td colspan="7" class="text-center text-gray-400 py-6">暂无商品，请新增或到“数据导入”导入商品</td></tr>';
+  }).join('') : '<tr><td colspan="8" class="text-center text-gray-400 py-6">暂无商品，请新增或到“数据导入”导入商品</td></tr>';
+  if ($('goodsCheckAll')) $('goodsCheckAll').checked = false;
+  updateGoodsSelection();
+}
+
+function toggleGoodsSelection(checked) {
+  document.querySelectorAll('.goods-row-check').forEach(function (box) { box.checked = !!checked; });
+  updateGoodsSelection();
+}
+
+function updateGoodsSelection() {
+  const boxes = Array.from(document.querySelectorAll('.goods-row-check'));
+  const selected = boxes.filter(function (box) { return box.checked; }).length;
+  const button = $('batchDeleteGoodsBtn');
+  const count = $('goodsSelectedCount');
+  if (button) {
+    button.disabled = selected === 0;
+    button.textContent = selected ? '批量删除 (' + selected + ')' : '批量删除';
+  }
+  if (count) count.textContent = selected ? '已选 ' + selected + ' 个商品' : '';
+  const all = $('goodsCheckAll');
+  if (all) {
+    all.checked = boxes.length > 0 && selected === boxes.length;
+    all.indeterminate = selected > 0 && selected < boxes.length;
+  }
+}
+
+async function batchDeleteGoods() {
+  const ids = Array.from(document.querySelectorAll('.goods-row-check:checked')).map(function (box) { return Number(box.value); });
+  if (!ids.length) return toast('请先勾选要删除的商品', 'err');
+  const names = ids.map(function (id) {
+    const g = findGoodsById(id);
+    return g ? g.code + ' ' + g.name : String(id);
+  });
+  const preview = names.slice(0, 6).join('、') + (names.length > 6 ? ' 等 ' + names.length + ' 个' : '');
+  if (!confirm('确定删除以下商品？\n' + preview +
+    '\n\n没有历史单据的商品会彻底删除并释放编码；有历史单据的商品只停用，编码和单据保留。')) return;
+  const button = $('batchDeleteGoodsBtn');
+  if (button) { button.disabled = true; button.textContent = '删除中…'; }
+  try {
+    const result = await api('/goods/batch-delete', { method: 'POST', body: { ids } });
+    await refreshGoods();
+    const parts = [];
+    if (result.deleted) parts.push('彻底删除 ' + result.deleted + ' 个');
+    if (result.disabled) parts.push('停用 ' + result.disabled + ' 个');
+    if (result.errors && result.errors.length) parts.push('失败 ' + result.errors.length + ' 个');
+    toast(parts.join('，') || '没有商品被处理', result.errors && result.errors.length ? 'err' : 'ok');
+    if (result.errors && result.errors.length) {
+      alert('以下商品删除失败：\n' + result.errors.slice(0, 10).map(function (item) {
+        return 'ID ' + item.id + '：' + item.error;
+      }).join('\n'));
+    }
+  } catch (err) {
+    toast(err.message, 'err');
+    updateGoodsSelection();
+  }
 }
 
 /* 保质期：界面按天/月/年录入，数据库统一存天数（1 月=30 天，1 年=365 天） */
@@ -2493,7 +2812,9 @@ async function startEditOrder(orderId) {
       tel: order.customer_tel
     };
     priceMap = {};
-    try { await loadCustomerPrices(order.user_id); } catch (err) { /* 价格加载失败不阻塞改单 */ }
+    printPrefMap = {};
+    try { if (order.user_id) await loadCustomerPrices(order.user_id); } catch (err) { /* 价格加载失败不阻塞改单 */ }
+    try { if (order.user_id) await loadCustomerPrintPrefs(order.user_id); } catch (err) { /* 打印记忆加载失败不阻塞改单 */ }
     sellRows = (order.items || []).map(function (item) {
       const goods = findGoodsById(item.goods_id);
       return {
@@ -2513,6 +2834,9 @@ async function startEditOrder(orderId) {
         makeDate: item.make_date || '',
         expDate: item.exp_date || '',
         remark: item.remark || '',
+        hideSpec: !!item.hide_spec,
+        hideSpecTouched: true,
+        hideSpecGoodsId: item.goods_id,
         history: [],
         defaultPrice: goods ? goods.default_price : null
       };
@@ -2522,6 +2846,14 @@ async function startEditOrder(orderId) {
     });
     if (!sellRows.length) sellRows = [newRow()];
     renderSellTable();
+    auditOrder('edit_loaded', {
+      detail: {
+        order_id: editingOrderId,
+        order_no: order.order_no,
+        items: order.items || [],
+        rows: auditRowsSnapshot()
+      }
+    });
     setSaleModeUI();
   } catch (err) {
     toast('加载订单失败：' + err.message, 'err');
@@ -2574,7 +2906,11 @@ async function saveSellOrder(opts) {
   const validRows = sellRows.filter(function (row) {
     return row.pid && Number(row.qty) > 0 && Number(row.price) > 0;
   });
-  if (!validRows.length) return toast('至少需要一行有效商品（编码、数量、单价）', 'err');
+  if (!validRows.length) {
+    auditOrder('save_blocked', { detail: { reason: 'no_valid_rows', rows: auditRowsSnapshot() } });
+    await flushOrderAudit();
+    return toast('至少需要一行有效商品（编码、数量、单价）', 'err');
+  }
 
   const items = validRows.map(function (row) {
     return {
@@ -2588,9 +2924,21 @@ async function saveSellOrder(opts) {
       stock_id: row.stock_id || null,
       make_date: row.makeDate || null,
       exp_date: row.expDate || null,
-      remark: row.remark
+      remark: row.remark,
+      hide_spec: !!row.hideSpec
     };
   });
+  auditOrder('save_attempt', {
+    detail: {
+      mode: editingOrderId ? 'edit' : 'create',
+      customer_name: customerName,
+      customer_id: matchedCustomer ? matchedCustomer.id : null,
+      all_rows: auditRowsSnapshot(),
+      valid_item_count: items.length,
+      items: items
+    }
+  });
+  await flushOrderAudit();
 
   const button = $('btnSaveOrder');
   if (button && !silentUI) { button.disabled = true; button.textContent = '保存中…'; }
@@ -2606,6 +2954,8 @@ async function saveSellOrder(opts) {
         }
       });
       editingOrder = updated || editingOrder;
+      auditOrder('save_result', { detail: { ok: true, mode: 'edit', remote: updated } });
+      await flushOrderAudit();
       if (!silent) toast('订单修改已保存，金额 ￥' + money(updated.total_amount), 'ok');
       if (!keepPage) await startEditOrder(editingOrderId);
       return updated;
@@ -2627,6 +2977,8 @@ async function saveSellOrder(opts) {
       items: items
     };
     const order = await api('/orders', { method: 'POST', body: payload });
+    auditOrder('save_result', { detail: { ok: true, mode: 'create', remote: order } });
+    await flushOrderAudit();
     await refreshCustomers();
     if (keepPage) {
       // 打印前自动保存：保留当前单据页面，转为已保存订单，避免重复保存
@@ -2646,6 +2998,8 @@ async function saveSellOrder(opts) {
     }
     return order;
   } catch (err) {
+    auditOrder('save_failed', { detail: { error: err.message, rows: auditRowsSnapshot() } });
+    await flushOrderAudit();
     toast(err.message, 'err');
     if (String(err.message).indexOf('订单号') >= 0) refreshOrderNo();
     return null;
@@ -2673,6 +3027,7 @@ function clearSellForm() {
   }
   currentCustomer = null;
   priceMap = {};
+  printPrefMap = {};
   $('sellCustomerInput').value = '';
   $('custNo').value = '';
   $('custAddr').value = '';
@@ -3196,7 +3551,20 @@ function renderPurchaseRows() {
       '<td><input class="w-full border px-1 py-1" value="' + esc(row.remark) + '" placeholder="备注" oninput="purchaseRows[' + index + '].remark=this.value"></td>' +
       '<td></td></tr>';
   }).join('');
+  paintPurchaseHints();
   calcPurchaseTotal();
+}
+
+function paintPurchaseHints() {
+  purchaseRows.forEach(function (row, index) {
+    const tr = $('purchaseTableBody') && $('purchaseTableBody').rows[index];
+    const hint = tr && tr.cells[4] ? tr.cells[4].querySelector('.purchase-base-hint') : null;
+    if (!hint) return;
+    const text = purchaseBaseHint(row);
+    hint.textContent = text;
+    hint.className = 'purchase-base-hint text-[10px] leading-tight mt-0.5 ' +
+      (text.indexOf('不能开单') >= 0 ? 'text-red-500' : 'text-gray-500');
+  });
 }
 
 /* ---------- 进货品名模糊检索 ---------- */
@@ -3650,6 +4018,7 @@ function calcPurchaseRow(index) {
   row.amount = Math.round((Number(row.qty || 0) * Number(row.price || 0) + Number.EPSILON) * 100) / 100;
   const tr = $('purchaseTableBody').rows[index];
   if (tr && tr.cells[7]) tr.cells[7].querySelector('input').value = money(row.amount);
+  paintPurchaseHints();
   calcPurchaseTotal();
 }
 
@@ -3681,6 +4050,16 @@ async function savePurchase() {
   await flushPurchaseSpecs();
   const validRows = purchaseRows.filter(function (row) { return row.pid && Number(row.qty) > 0 && Number(row.price) >= 0; });
   if (!validRows.length) return toast('至少需要一行有效进货商品', 'err');
+  for (let i = 0; i < validRows.length; i += 1) {
+    const row = validRows[i];
+    const rowNo = purchaseRows.indexOf(row) + 1;
+    if (!String(displaySpec(row) || '').trim()) {
+      return toast('第 ' + rowNo + ' 行必须填写规格', 'err');
+    }
+    if (!String(row.unit || '').trim()) {
+      return toast('第 ' + rowNo + ' 行必须选择单位', 'err');
+    }
+  }
   const button = $('savePurchaseBtn');
   if (button) { button.disabled = true; button.textContent = '保存中…'; }
   const isEdit = !!purchaseEditingId;
@@ -3803,9 +4182,10 @@ async function loadPurchases() {
     tbody.innerHTML = (data.items || []).length ? data.items.map(function (p) {
       const voided = Number(p.is_void) === 1;
       const canEdit = !voided && stockConfig.mode === 'batch';
-      const ops = (canEdit ? '<button onclick="editPurchase(' + p.id + ')" class="text-primaryBlue mr-2">编辑</button>' : '') +
-        (voided ? '' : '<button onclick="voidPurchase(' + p.id + ')" class="text-red-500">作废</button>');
-      return '<tr class="border-b ' + (voided ? 'bg-gray-100 text-gray-400' : '') + '">' +
+      const ops = '<button onclick="event.stopPropagation();openPurchaseDetail(' + p.id + ')" class="text-primaryBlue mr-2">查看</button>' +
+        (canEdit ? '<button onclick="event.stopPropagation();editPurchase(' + p.id + ')" class="text-primaryBlue mr-2">编辑</button>' : '') +
+        (voided ? '' : '<button onclick="event.stopPropagation();voidPurchase(' + p.id + ')" class="text-red-500">作废</button>');
+      return '<tr class="border-b cursor-pointer hover:bg-blue-50 ' + (voided ? 'bg-gray-100 text-gray-400' : '') + '" onclick="openPurchaseDetail(' + p.id + ')">' +
         '<td class="border px-2 py-1 font-mono">' + esc(p.purchase_no) + '</td>' +
         '<td class="border px-2 py-1">' + esc(p.bill_date) + '</td>' +
         '<td class="border px-2 py-1">' + esc(p.supplier || '-') + '</td>' +
@@ -3828,6 +4208,62 @@ async function voidPurchase(id) {
     await loadPurchases();
   } catch (err) {
     toast(err.message, 'err');
+  }
+}
+
+async function openPurchaseDetail(id) {
+  const modal = $('purchaseDetailModal');
+  const body = $('purchaseDetailBody');
+  if (!modal || !body) return;
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  $('purchaseDetailNo').textContent = '加载中…';
+  $('purchaseDetailMeta').innerHTML = '';
+  $('purchaseDetailCount').textContent = '';
+  $('purchaseDetailTotal').textContent = '';
+  body.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400 py-6">加载中…</td></tr>';
+  try {
+    const p = await api('/purchases/' + id);
+    $('purchaseDetailNo').textContent = p.purchase_no || '';
+    const voided = Number(p.is_void) === 1;
+    $('purchaseDetailMeta').innerHTML =
+      '<div><span class="text-gray-500">进货日期：</span>' + esc(p.bill_date || '-') + '</div>' +
+      '<div><span class="text-gray-500">供应商：</span>' + esc(p.supplier || '-') + '</div>' +
+      '<div><span class="text-gray-500">状态：</span>' + (voided ? '<span class="text-red-500">已作废</span>' : '<span class="text-green-600">正常</span>') + '</div>' +
+      '<div><span class="text-gray-500">录入人：</span>' + esc(p.created_by || '-') + '</div>' +
+      (p.remark ? '<div class="col-span-2"><span class="text-gray-500">备注：</span>' + esc(p.remark) + '</div>' : '');
+    const items = p.items || [];
+    body.innerHTML = items.length ? items.map(function (item) {
+      const goods = findGoodsById(item.goods_id) || {};
+      const baseUnit = goods.base_unit || goods.unit || '';
+      const baseQty = Number(item.base_qty || 0);
+      const costBase = Number(item.cost_base || 0);
+      return '<tr class="border-b">' +
+        '<td class="border px-2 py-1 font-mono">' + esc(item.goods_code || '') + '</td>' +
+        '<td class="border px-2 py-1">' + esc(item.goods_name || '') + '</td>' +
+        '<td class="border px-2 py-1">' + esc(item.spec || '') + '</td>' +
+        '<td class="border px-2 py-1 text-center">' + esc(item.unit || '') + '</td>' +
+        '<td class="border px-2 py-1 text-right">' + (Math.round(Number(item.qty || 0) * 1000) / 1000) + '</td>' +
+        '<td class="border px-2 py-1 text-right">￥' + money(item.price) + '</td>' +
+        '<td class="border px-2 py-1 text-right">￥' + money(item.amount) + '</td>' +
+        '<td class="border px-2 py-1 text-right">' + (baseQty ? (Math.round(baseQty * 1000) / 1000) + esc(baseUnit) + ' / ￥' + money(costBase) + '/' + esc(baseUnit) : '-') + '</td>' +
+        '<td class="border px-2 py-1 text-center">' + esc(item.make_date || '-') + '</td>' +
+        '<td class="border px-2 py-1 text-center">' + esc(item.exp_date || '-') + '</td>' +
+        '</tr>';
+    }).join('') : '<tr><td colspan="10" class="text-center text-gray-400 py-6">该进货单没有明细</td></tr>';
+    $('purchaseDetailCount').textContent = '共 ' + items.length + ' 个商品';
+    $('purchaseDetailTotal').textContent = '￥' + money(p.total_amount);
+  } catch (err) {
+    $('purchaseDetailNo').textContent = '加载失败';
+    body.innerHTML = '<tr><td colspan="10" class="text-center text-red-500 py-6">' + esc(err.message) + '</td></tr>';
+  }
+}
+
+function closePurchaseDetail() {
+  const modal = $('purchaseDetailModal');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
   }
 }
 
@@ -4721,6 +5157,18 @@ async function printSellBill() {
     return row.pid && Number(row.qty) > 0 && Number(row.price) > 0;
   });
   if (!validRows.length) return toast('没有可打印的有效商品行', 'err');
+  auditOrder('print_attempt', {
+    detail: {
+      order_no: $('sellOrderNo').value,
+      customer_name: $('sellCustomerInput').value || '散客',
+      paper: currentPaper,
+      all_rows: auditRowsSnapshot(),
+      print_rows: validRows.map(function (row) {
+        return auditRowSnapshot(row, sellRows.indexOf(row));
+      })
+    }
+  });
+  await flushOrderAudit();
 
   const voidMark = $('printVoidMark');
   if (voidMark) voidMark.classList.toggle('hidden', !(editingOrder && Number(editingOrder.is_void) === 1));
@@ -4730,7 +5178,7 @@ async function printSellBill() {
     return '<tr>' +
       '<td>' + esc(row.pid) + '</td>' +
       '<td>' + esc(row.pname) + '</td>' +
-      '<td>' + esc(displaySpec(row)) + '</td>' +
+      '<td>' + esc(row.hideSpec ? '' : displaySpec(row)) + '</td>' +
       '<td>' + esc(row.unit) + '</td>' +
       '<td>' + esc(row.qty) + '</td>' +
       '<td>' + money(row.price) + '</td>' +
@@ -4823,7 +5271,7 @@ function buildDesktopPrintJob(cfg) {
       return {
         code: row.pid,
         name: row.pname,
-        spec: displaySpec(row),
+        spec: row.hideSpec ? '' : displaySpec(row),
         unit: row.unit,
         qty: row.qty,
         price: money(row.price),
@@ -4854,6 +5302,15 @@ function buildDesktopPrintJob(cfg) {
 
 async function doPrint() {
   fillPrintArea();
+  auditOrder('print_start', {
+    detail: {
+      order_no: $('sellOrderNo').value,
+      desktop: !!(window.billingDesktop && window.billingDesktop.openPrintSettings),
+      paper: currentPaper,
+      all_rows: auditRowsSnapshot()
+    }
+  });
+  await flushOrderAudit();
 
   if (window.billingDesktop && window.billingDesktop.openPrintSettings) {
     try {
