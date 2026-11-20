@@ -706,7 +706,7 @@ function switchPage(pageName, keepOrderEdit) {
     confirmResolver = null;
     pendingConfirm(false);
   }
-  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'accountModal', 'purchaseDetailModal', 'printPreviewModal', 'confirmModal'].forEach(function (id) {
+  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'accountModal', 'goodsPurchaseModal', 'purchaseDetailModal', 'printPreviewModal', 'confirmModal'].forEach(function (id) {
     const modal = $(id);
     if (modal && !modal.classList.contains('hidden')) {
       modal.classList.add('hidden');
@@ -1441,24 +1441,35 @@ function saleUnitPrice(row, unitName) {
 
 function unitSelectHtml(row, index, dis) {
   const units = row.units || [];
-  if (!units.length || units.length === 1 || row.allowUnitEdit) {
-    return '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" list="unitOptions" placeholder="单位" value="' + esc(row.unit) + '" oninput="sellRows[' + index + '].unit=this.value" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>';
+  if (!units.length) {
+    return '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" value="' + esc(row.unit || '未配置') + '" disabled title="该商品未配置单位，请先在商品资料中补充单位及换算系数">';
   }
+  const current = String(row.unit || '');
+  const invalid = current && !units.some(function (u) { return u.unit === current; })
+    ? '<option value="' + esc(current) + '" selected disabled>' + esc(current) + '（未配置）</option>'
+    : '';
   return '<select class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" onchange="onUnitCommit(' + index + ',this.value)"' + dis + '>' +
+    invalid +
     units.map(function (u) {
-      return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
+      return '<option value="' + esc(u.unit) + '"' + (u.unit === current ? ' selected' : '') + '>' +
         esc(u.unit) + '</option>';
     }).join('') + '</select>';
 }
 
 function purchaseUnitSelectHtml(row, index) {
   const units = row.units || [];
-  if (!units.length || units.length === 1 || row.allowUnitEdit) {
-    return '<input class="w-full border px-1 py-1" list="unitOptions" placeholder="单位" value="' + esc(row.unit) + '" oninput="purchaseRows[' + index + '].unit=this.value" onchange="onPurchaseUnitCommit(' + index + ',this.value)">';
+  if (!units.length) {
+    return '<input class="w-full border px-1 py-1 bg-gray-50" value="' + esc(row.unit || '未配置') + '" disabled title="该商品未配置单位，请先在商品资料中补充单位及换算系数">' +
+      '<div class="purchase-base-hint text-[10px] leading-tight text-gray-500 mt-0.5"></div>';
   }
+  const current = String(row.unit || '');
+  const invalid = current && !units.some(function (u) { return u.unit === current; })
+    ? '<option value="' + esc(current) + '" selected disabled>' + esc(current) + '（未配置）</option>'
+    : '';
   return '<select class="w-full border px-1 py-1" onchange="onPurchaseUnitCommit(' + index + ',this.value)">' +
+    invalid +
     units.map(function (u) {
-      return '<option value="' + esc(u.unit) + '"' + (u.unit === row.unit ? ' selected' : '') + '>' +
+      return '<option value="' + esc(u.unit) + '"' + (u.unit === current ? ' selected' : '') + '>' +
         esc(u.unit) + '</option>';
     }).join('') + '</select>' +
     '<div class="purchase-base-hint text-[10px] leading-tight text-gray-500 mt-0.5"></div>';
@@ -1471,7 +1482,7 @@ function purchaseBaseHint(row) {
   if (!unit || !base) return '';
   const info = units.filter(function (u) { return u.unit === unit; })[0];
   if (!info) {
-    return units.length > 1 ? '未配置「' + unit + '」换算，不能开单' : '';
+    return '未配置「' + unit + '」换算，不能开单';
   }
   const factor = Number(info.factor || 1);
   if (factor <= 1) return '';
@@ -1887,9 +1898,6 @@ function displaySpec(row) {
   const baseUnit = row.baseUnit || ((row.units || []).find(function (u) { return u.is_base; }) || {}).unit || '';
   const slashIndex = spec.indexOf('/');
   if (slashIndex >= 0) {
-    const specUnit = spec.slice(slashIndex + 1).trim();
-    if (unitName && specUnit === unitName) return spec;
-    if (unitName && baseUnit && unitName === baseUnit) return '';
     return spec;
   }
   if (baseUnit && spec.toLowerCase().slice(-baseUnit.length) === baseUnit.toLowerCase()) return spec;
@@ -3409,6 +3417,15 @@ async function saveSellOrder(opts) {
     await flushOrderAudit();
     return toast('至少需要一行有效商品（编码、数量、单价）', 'err');
   }
+  for (let i = 0; i < validRows.length; i += 1) {
+    const row = validRows[i];
+    if (!String(row.unit || '').trim()) {
+      return toast('第 ' + (sellRows.indexOf(row) + 1) + ' 行必须选择单位', 'err');
+    }
+    if ((row.units || []).length && !(row.units || []).some(function (u) { return u.unit === row.unit; })) {
+      return toast('第 ' + (sellRows.indexOf(row) + 1) + ' 行单位「' + row.unit + '」未在商品资料中配置，不能按 1:1 记账；请先设置换算或改选已配置单位', 'err');
+    }
+  }
 
   const items = validRows.map(function (row) {
     return {
@@ -4039,7 +4056,9 @@ function renderPurchaseRows() {
       '<td class="text-center"><button onclick="delPurchaseRow(' + index + ')" class="' + permButtonClass(['purchase.delRow'], 'text-red-500') + ' text-lg leading-none"' + permButtonDisabled(['purchase.delRow']) + '>－</button></td>' +
       '<td><input class="w-full border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码" oninput="purchaseRows[' + index + '].pid=this.value" onchange="onPurchasePidChange(' + index + ')" onkeydown="if(event.key===\'Enter\'){this.blur();}"></td>' +
       '<td class="relative purchase-name-cell"><input class="w-full border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（可模糊检索）" oninput="onPurchaseNameInput(' + index + ', this.value)" onfocus="onPurchaseNameFocus(' + index + ')" onkeydown="onPurchaseNameKeydown(event,' + index + ')"><div class="purchase-name-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
-      '<td class="relative purchase-spec-cell"><div class="flex gap-1"><input class="w-full border px-1 py-1" value="' + esc(displaySpec(row)) + '" placeholder="规格（选或输）" oninput="onPurchaseSpecInput(' + index + ', this.value)" onfocus="openPurchaseSpecSuggest(' + index + ')" onkeydown="onPurchaseSpecKeydown(event,' + index + ')" onblur="onPurchaseSpecBlur(' + index + ', event)"><button type="button" class="border px-1 text-gray-600" onclick="togglePurchaseSpecSuggest(' + index + ')">选</button></div><div class="purchase-spec-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
+      '<td class="relative purchase-spec-cell"><div class="flex gap-1"><input class="w-full border px-1 py-1" value="' + esc(displaySpec(row)) + '" placeholder="规格（选或输）" oninput="onPurchaseSpecInput(' + index + ', this.value)" onfocus="openPurchaseSpecSuggest(' + index + ')" onkeydown="onPurchaseSpecKeydown(event,' + index + ')" onblur="onPurchaseSpecBlur(' + index + ', event)"><button type="button" class="border px-1 text-gray-600" onclick="togglePurchaseSpecSuggest(' + index + ')">选</button>' +
+        (row.goods_id ? '<button type="button" class="border px-1 text-primaryBlue whitespace-nowrap" title="查看该商品相关进货记录" onclick="openGoodsPurchaseHistory(' + Number(row.goods_id) + ')">历史</button>' : '') +
+        '</div><div class="purchase-spec-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
       '<td>' + purchaseUnitSelectHtml(row, index) + '</td>' +
       qtyCell +
       '<td><input type="number" step="0.01" min="0" class="w-full border px-1 py-1" value="' + esc(row.price) + '" oninput="purchaseRows[' + index + '].price=this.value;calcPurchaseRow(' + index + ')"' + (canDo('purchase.price') ? '' : ' readonly') + '></td>' +
@@ -4275,11 +4294,22 @@ function renderPurchaseSpecSuggest(index) {
       (i === purchaseSpecState.active ? 'bg-blue-100' : '') + '" data-spec="' + esc(s.spec) + '">' +
       '<span class="font-medium">' + esc(s.spec || '（无规格）') + '</span>' +
       '<span class="text-gray-400 ml-2">' + esc(s.unit || '') + '</span>' +
-      '<span class="text-gray-300 ml-2 font-mono">' + esc(s.code || '') + '</span></div>';
+      '<span class="text-gray-300 ml-2 font-mono">' + esc(s.code || '') + '</span>' +
+      '<button type="button" class="purchase-history-btn ml-2 text-primaryBlue text-xs underline" data-history-id="' + Number(s.goods_id) + '" data-history-name="' + esc((s.name || '') + (s.spec ? ' / ' + s.spec : '')) + '">进货记录</button>' +
+      '</div>';
   }).join('') + '<div class="px-2 py-1 text-gray-400 border-t">没有合适规格？直接输入新规格，回车自动生成编码</div>';
   box.querySelectorAll('.purchase-spec-suggest-item').forEach(function (el) {
     el.addEventListener('mousedown', function (event) { event.preventDefault(); });
-    el.addEventListener('click', function () { choosePurchaseSpec(index, el.dataset.spec); });
+    el.addEventListener('click', function (event) {
+      if (event.target.closest('.purchase-history-btn')) {
+        event.preventDefault();
+        event.stopPropagation();
+        const btn = event.target.closest('.purchase-history-btn');
+        openGoodsPurchaseHistory(Number(btn.dataset.historyId), btn.dataset.historyName);
+        return;
+      }
+      choosePurchaseSpec(index, el.dataset.spec);
+    });
   });
   box.classList.remove('hidden');
 }
@@ -4552,11 +4582,14 @@ async function savePurchase() {
   for (let i = 0; i < validRows.length; i += 1) {
     const row = validRows[i];
     const rowNo = purchaseRows.indexOf(row) + 1;
-    if (!String(displaySpec(row) || '').trim()) {
+    if (!String(displaySpec(row) || '').trim() && !row.goods_id) {
       return toast('第 ' + rowNo + ' 行必须填写规格', 'err');
     }
     if (!String(row.unit || '').trim()) {
       return toast('第 ' + rowNo + ' 行必须选择单位', 'err');
+    }
+    if ((row.units || []).length && !(row.units || []).some(function (u) { return u.unit === row.unit; })) {
+      return toast('第 ' + rowNo + ' 行单位「' + row.unit + '」未在商品资料中配置，不能按 1:1 记账；请先设置换算或改选已配置单位', 'err');
     }
   }
   const button = $('savePurchaseBtn');
@@ -4707,6 +4740,65 @@ async function voidPurchase(id) {
     await loadPurchases();
   } catch (err) {
     toast(err.message, 'err');
+  }
+}
+
+async function openGoodsPurchaseHistory(goodsId, label) {
+  const modal = $('goodsPurchaseModal');
+  const body = $('goodsPurchaseBody');
+  if (!modal || !body) return;
+  closePurchaseNameSuggest();
+  closePurchaseSpecSuggest();
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  $('goodsPurchaseTitle').textContent = label || '加载中…';
+  $('goodsPurchaseMeta').innerHTML = '';
+  $('goodsPurchaseCount').textContent = '';
+  body.innerHTML = '<tr><td colspan="11" class="text-center text-gray-400 py-6">加载中…</td></tr>';
+  try {
+    const data = await api('/purchases/goods/' + Number(goodsId) + '?limit=200');
+    const goods = data.goods || {};
+    const summary = data.summary || {};
+    const title = (goods.name || '') + (goods.spec ? ' / ' + goods.spec : '');
+    $('goodsPurchaseTitle').textContent = title || label || '';
+    $('goodsPurchaseMeta').innerHTML =
+      '<div class="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1">' +
+        '<div><span class="text-gray-500">商品编码：</span><span class="font-mono">' + esc(goods.code || '-') + '</span></div>' +
+        '<div><span class="text-gray-500">有效进货单：</span>' + Number(summary.purchase_count || 0) + ' 张</div>' +
+        '<div><span class="text-gray-500">累计进货金额：</span>￥' + money(summary.total_amount) + '</div>' +
+        '<div><span class="text-gray-500">最近进货：</span>' + esc(summary.last_date || '-') + '</div>' +
+        '<div><span class="text-gray-500">最近进货价：</span>' + (summary.last_price ? '￥' + money(summary.last_price) + ' / ' + esc(summary.last_unit || '') : '-') + '</div>' +
+        '<div class="md:col-span-3"><span class="text-gray-500">最近供应商：</span>' + esc(summary.last_supplier || '-') + '</div>' +
+      '</div>';
+    const items = data.items || [];
+    body.innerHTML = items.length ? items.map(function (item) {
+      const voided = Number(item.is_void) === 1;
+      return '<tr class="border-b hover:bg-blue-50 ' + (voided ? 'bg-gray-100 text-gray-400' : '') + '" onclick="openPurchaseDetail(' + Number(item.purchase_id) + ')">' +
+        '<td class="border px-2 py-1 text-center">' + esc(item.bill_date || '-') + '</td>' +
+        '<td class="border px-2 py-1 font-mono">' + esc(item.purchase_no || '') + '</td>' +
+        '<td class="border px-2 py-1">' + esc(item.supplier || '-') + '</td>' +
+        '<td class="border px-2 py-1 text-center">' + esc(item.unit || '') + '</td>' +
+        '<td class="border px-2 py-1 text-right">' + (Math.round(Number(item.qty || 0) * 1000) / 1000) + '</td>' +
+        '<td class="border px-2 py-1 text-right">￥' + money(item.price) + '</td>' +
+        '<td class="border px-2 py-1 text-right">￥' + money(item.amount) + '</td>' +
+        '<td class="border px-2 py-1 text-center">' + esc(item.make_date || '-') + '</td>' +
+        '<td class="border px-2 py-1 text-center">' + esc(item.exp_date || '-') + '</td>' +
+        '<td class="border px-2 py-1 text-center">' + (voided ? '<span class="text-red-500">已作废</span>' : '<span class="text-green-600">正常</span>') + '</td>' +
+        '<td class="border px-2 py-1 text-center"><button type="button" onclick="event.stopPropagation();openPurchaseDetail(' + Number(item.purchase_id) + ')" class="text-primaryBlue">查看整单</button></td>' +
+        '</tr>';
+    }).join('') : '<tr><td colspan="11" class="text-center text-gray-400 py-6">该商品还没有进货记录</td></tr>';
+    $('goodsPurchaseCount').textContent = '共 ' + items.length + ' 条进货明细';
+  } catch (err) {
+    $('goodsPurchaseTitle').textContent = '加载失败';
+    body.innerHTML = '<tr><td colspan="11" class="text-center text-red-500 py-6">' + esc(err.message) + '</td></tr>';
+  }
+}
+
+function closeGoodsPurchaseHistory() {
+  const modal = $('goodsPurchaseModal');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
   }
 }
 
@@ -5064,10 +5156,12 @@ async function loadStatSummary() {
   try {
     const data = await api('/stat/summary?' + statQuery(''));
     statRows = data.list || [];
+    const missingRows = statRows.filter(function (r) { return Number(r.cost_missing_count) > 0; });
     const filterParts = [];
     if (statGoodsIds.length) filterParts.push('商品 ' + statGoodsIds.map(statGoodsLabel).join('、'));
     if (statCustomerNos.length) filterParts.push('客户 ' + statCustomerNos.map(statCustomerLabel).join('、'));
     $('statHint').textContent = '共 ' + statRows.length + ' 行 · 当前按' + ($('statSnapshot').checked ? '快照' : '最新核算') + '成本' +
+      (missingRows.length ? ' · 成本缺失 ' + missingRows.length + ' 行、营业额 ￥' + money(missingRows.reduce(function (s, r) { return s + (Number(r.turnover) || 0); }, 0)) + ' 未计入利润，请补录进货/期初成本' : '') +
       (filterParts.length ? ' · 已筛选：' + filterParts.join('；') : '');
     renderStatChart();
     renderStatTable();

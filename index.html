@@ -149,7 +149,7 @@
   </div>
   <div class="flex-1"></div>
   <div class="flex items-center gap-4 text-sm">
-    <span class="text-xs text-white/60">v1.2.8</span>
+    <span class="text-xs text-white/60">v1.3.1</span>
     <span><span id="currentUserName">--</span></span>
     <button onclick="doLogout()" class="border border-white/40 rounded px-3 py-1 text-xs hover:bg-white/10">退出</button>
   </div>
@@ -1150,6 +1150,41 @@
   </div>
 </div>
 
+<!-- ==================== 商品进货记录弹窗 ==================== -->
+<div id="goodsPurchaseModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 no-print">
+  <div class="bg-white rounded overflow-hidden flex flex-col" style="width:1100px;max-width:96vw;max-height:88vh;">
+    <div class="bg-tableHeader text-white px-4 py-2 flex justify-between items-center">
+      <span>商品进货记录：<span id="goodsPurchaseTitle" class="font-medium"></span></span>
+      <button onclick="closeGoodsPurchaseHistory()" class="text-white text-xl leading-none" title="关闭">&times;</button>
+    </div>
+    <div id="goodsPurchaseMeta" class="px-4 py-3 text-sm bg-gray-50 border-b"></div>
+    <div class="flex-1 overflow-auto p-3">
+      <table class="w-full text-sm border">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="border px-2 py-2">进货日期</th>
+            <th class="border px-2 py-2">进货单号</th>
+            <th class="border px-2 py-2">供应商</th>
+            <th class="border px-2 py-2">单位</th>
+            <th class="border px-2 py-2">数量</th>
+            <th class="border px-2 py-2">进货价</th>
+            <th class="border px-2 py-2">金额</th>
+            <th class="border px-2 py-2">生产日期</th>
+            <th class="border px-2 py-2">保质期至</th>
+            <th class="border px-2 py-2">状态</th>
+            <th class="border px-2 py-2">操作</th>
+          </tr>
+        </thead>
+        <tbody id="goodsPurchaseBody"></tbody>
+      </table>
+    </div>
+    <div class="px-4 py-3 border-t flex justify-between items-center text-sm bg-gray-50">
+      <span id="goodsPurchaseCount" class="text-gray-500"></span>
+      <span class="text-gray-400 text-xs">点击“查看整单”可打开该进货单的完整明细</span>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== 进货单明细弹窗 ==================== -->
 <div id="purchaseDetailModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 no-print">
   <div class="bg-white w-[1000px] max-w-[96vw] max-h-[86vh] rounded overflow-hidden flex flex-col">
@@ -1321,7 +1356,7 @@
 
 <script src="./assets/echarts.min.js"></script>
 <script src="./config.js?v=20261120a"></script>
-<script src="./app.js?v=20261120h"></script>
+<script src="./app.js?v=20261120k"></script>
 </body>
 </html>
 
