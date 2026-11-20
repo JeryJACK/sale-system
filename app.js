@@ -7,7 +7,6 @@
 
 const TOKEN_KEY = 'billing_token';
 const API_KEY = 'billing_api_base';
-
 let token = localStorage.getItem(TOKEN_KEY) || '';
 let currentUser = null;
 let shopInfo = { name: '', addr: '', tel: '' };
@@ -130,15 +129,14 @@ function normalizeApiBase(value) {
 }
 
 function getApiBase() {
-  const stored = localStorage.getItem(API_KEY) || '';
-  const fallback = (window.APP_CONFIG && window.APP_CONFIG.API_BASE) || '';
-  return normalizeApiBase(stored || fallback);
+  // 服务器地址由程序内置配置固定，登录页和系统设置均不再允许查看或修改。
+  return normalizeApiBase((window.APP_CONFIG && window.APP_CONFIG.API_BASE) || '');
 }
 
 async function api(path, options) {
   options = options || {};
   const base = getApiBase();
-  if (!base) throw new Error('请先设置服务器 API 地址');
+  if (!base) throw new Error('程序未配置服务器地址，请联系管理员');
   const headers = {};
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = 'Bearer ' + token;
@@ -152,7 +150,7 @@ async function api(path, options) {
       cache: 'no-store'
     });
   } catch (err) {
-    throw new Error('无法连接服务器，请检查 API 地址、网络或 HTTPS 配置');
+    throw new Error('无法连接服务器，请检查网络后联系管理员');
   }
 
   let json = null;
@@ -285,15 +283,14 @@ function buildQuery(obj) {
 
 /* ==================== 登录 ==================== */
 async function doLogin() {
-  const base = normalizeApiBase($('loginApiBase').value);
+  const base = getApiBase();
   const username = $('loginUsername').value.trim();
   const password = $('loginPassword').value;
   const errorBox = $('loginError');
   errorBox.textContent = '';
 
-  if (!base) { errorBox.textContent = '请填写服务器 API 地址'; return; }
+  if (!base) { errorBox.textContent = '程序未配置服务器地址，请联系管理员'; return; }
   if (!username || !password) { errorBox.textContent = '请填写账号和密码'; return; }
-  $('loginApiBase').value = base;
 
   const button = document.querySelector('#loginOverlay button');
   button.disabled = true;
@@ -308,7 +305,7 @@ async function doLogin() {
     if (!response.ok || !json || json.ok !== true) {
       throw new Error((json && json.error) || '登录失败');
     }
-    localStorage.setItem(API_KEY, base);
+    localStorage.removeItem(API_KEY);
     token = json.data.token;
     localStorage.setItem(TOKEN_KEY, token);
     currentUser = json.data.staff;
@@ -352,6 +349,7 @@ async function initApp() {
   try {
     if (!currentUser) currentUser = await api('/auth/me');
     $('currentUserName').textContent = (currentUser.display_name || currentUser.username || '') + '（' + (currentUser.username || '') + '）';
+    applyPermissions();
     shopInfo = await api('/shop');
     await Promise.all([refreshCustomers(), refreshGoods()]);
     renderShopInfo();
@@ -360,13 +358,42 @@ async function initApp() {
     $('sellDate').value = todayStr();
     if (!sellRows.length) addRow();
     await refreshOrderNo();
-    switchPage('sale');
+    switchPage(PAGE_ORDER.find(canUsePage) || 'home');
   } catch (err) {
     toast(err.message, 'err');
   }
 }
 
 /* ==================== 页面切换 ==================== */
+const PAGE_ORDER = ['home', 'sale', 'orderList', 'detail', 'customerManage', 'purchase', 'stock', 'stat', 'import', 'setting'];
+
+function canUsePage(pageName) {
+  if (!currentUser) return true;
+  if (currentUser.role === 'admin') return true;
+  if (pageName === 'accounts') return false;
+  const granted = currentUser.permissions || [];
+  return granted.indexOf(pageName) >= 0;
+}
+
+function applyPermissions() {
+  document.querySelectorAll('#sideMenu .menu-item').forEach(function (item) {
+    const page = item.dataset.page;
+    const allowed = page === 'accounts' ? (currentUser && currentUser.role === 'admin') : canUsePage(page);
+    item.classList.toggle('hidden', !allowed);
+  });
+  document.querySelectorAll('.side-menu-content > div:not(.menu-item)').forEach(function (heading) {
+    if (heading.classList.contains('hidden')) return;
+    let next = heading.nextElementSibling;
+    let hasVisible = false;
+    while (next) {
+      if (!next.classList.contains('menu-item')) break;
+      if (!next.classList.contains('hidden')) hasVisible = true;
+      next = next.nextElementSibling;
+    }
+    heading.classList.toggle('hidden', !hasVisible);
+  });
+}
+
 function setMenuActive(pageName) {
   document.querySelectorAll('.menu-item').forEach(function (el) {
     el.classList.toggle('side-item-active', el.dataset.page === pageName);
@@ -457,13 +484,18 @@ function releaseHiddenFocus() {
 }
 
 function switchPage(pageName, keepOrderEdit) {
+  if (!canUsePage(pageName)) {
+    toast('当前账号没有该模块权限，请联系管理员分配', 'err');
+    pageName = PAGE_ORDER.find(canUsePage) || 'home';
+    if (!canUsePage(pageName)) return;
+  }
   // 从其它页面（含首页“去开单”）进入新增销售时，必须彻底退出上一张订单的编辑态，
   // 否则 editingOrderId 残留会把客户、日期、明细全部禁用，表现为“点输入框没反应”。
   if (pageName === 'sale' && !keepOrderEdit && editingOrderId) {
     exitOrderEdit();
   }
   // 切页时把可能残留的弹窗层收掉，避免透明遮罩盖住新页面导致“鼠标点了没反应”。
-  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'printPreviewModal'].forEach(function (id) {
+  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'accountModal', 'printPreviewModal'].forEach(function (id) {
     const modal = $(id);
     if (modal && !modal.classList.contains('hidden')) {
       modal.classList.add('hidden');
@@ -475,7 +507,7 @@ function switchPage(pageName, keepOrderEdit) {
   closeSpecSuggest();
   closePurchaseNameSuggest();
   closePurchaseSpecSuggest();
-  ['home', 'sale', 'orderList', 'detail', 'customerManage', 'purchase', 'stock', 'stat', 'import', 'setting'].forEach(function (id) {
+  ['home', 'sale', 'orderList', 'detail', 'customerManage', 'purchase', 'stock', 'stat', 'import', 'setting', 'accounts'].forEach(function (id) {
     const page = $('page-' + id);
     if (page) page.classList.add('hidden');
   });
@@ -509,6 +541,7 @@ function switchPage(pageName, keepOrderEdit) {
   if (pageName === 'stock') { renderGoodsManage(); refreshGoods().catch(function () {}); }
   if (pageName === 'stat') initStatPage();
   if (pageName === 'setting') { fillSettings(); loadStockConfig(); loadMemoGoodsSelect(); }
+  if (pageName === 'accounts') loadStaffAccounts();
 }
 
 /* ==================== 店铺信息 ==================== */
@@ -522,7 +555,6 @@ function fillSettings() {
   $('setShopName').value = shopInfo.name || '';
   $('setShopAddr').value = shopInfo.addr || '';
   $('setShopTel').value = shopInfo.tel || '';
-  $('setApiBase').value = getApiBase();
 }
 
 async function saveShopInfo() {
@@ -553,13 +585,152 @@ async function changePassword() {
   } catch (err) { toast(err.message, 'err'); }
 }
 
-function saveApiBase() {
-  const base = normalizeApiBase($('setApiBase').value);
-  if (!base) return toast('API 地址不能为空', 'err');
-  localStorage.setItem(API_KEY, base);
-  toast('接口地址已保存，请重新登录', 'ok');
-  doLogout();
-  $('loginApiBase').value = base;
+/* ==================== 登录账号与模块权限 ==================== */
+let staffAccountsCache = [];
+let accountModulesCache = [];
+
+function moduleDisplayName(key) {
+  const item = accountModulesCache.find(function (m) { return m.key === key; });
+  return item ? item.name : key;
+}
+
+async function loadStaffAccounts() {
+  const body = $('staffTableBody');
+  body.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400 py-6">加载中…</td></tr>';
+  try {
+    const data = await api('/staff');
+    staffAccountsCache = data.items || [];
+    accountModulesCache = data.modules || [];
+    renderStaffAccounts();
+  } catch (err) {
+    body.innerHTML = '<tr><td colspan="7" class="text-center text-red-500 py-6">' + esc(err.message) + '</td></tr>';
+  }
+}
+
+function renderStaffAccounts() {
+  const body = $('staffTableBody');
+  if (!staffAccountsCache.length) {
+    body.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400 py-6">暂无账号</td></tr>';
+    return;
+  }
+  body.innerHTML = staffAccountsCache.map(function (row) {
+    const isAdmin = row.role === 'admin';
+    const permissionText = isAdmin ? '全部模块' : ((row.permissions || []).map(moduleDisplayName).join('、') || '未分配');
+    const status = row.is_active
+      ? '<span class="text-green-600">启用</span>'
+      : '<span class="text-gray-400">已停用</span>';
+    const toggle = isAdmin ? '' :
+      '<button onclick="toggleAccountActive(' + row.id + ',' + (row.is_active ? 'false' : 'true') + ')" class="text-gray-600 hover:text-primaryBlue ml-3">' +
+      (row.is_active ? '停用' : '启用') + '</button>';
+    return '<tr class="border-b">' +
+      '<td class="border px-3 py-2 font-mono">' + esc(row.username) + '</td>' +
+      '<td class="border px-3 py-2">' + esc(row.display_name) + '</td>' +
+      '<td class="border px-3 py-2">' + esc(row.role_name) + '</td>' +
+      '<td class="border px-3 py-2">' + status + '</td>' +
+      '<td class="border px-3 py-2 text-xs leading-5">' + esc(permissionText) + '</td>' +
+      '<td class="border px-3 py-2 text-gray-500">' + esc(row.updated_at || row.created_at || '') + '</td>' +
+      '<td class="border px-3 py-2 text-center whitespace-nowrap">' +
+        '<button onclick="openAccountModal(' + row.id + ')" class="text-primaryBlue hover:underline">编辑</button>' + toggle +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function renderAccountPermissionOptions(selected) {
+  const checked = selected || [];
+  $('accountPermissionList').innerHTML = accountModulesCache.map(function (m) {
+    const on = checked.indexOf(m.key) >= 0 ? ' checked' : '';
+    return '<label class="flex items-start gap-2 border rounded p-2 cursor-pointer hover:bg-blue-50">' +
+      '<input type="checkbox" class="account-perm mt-0.5" data-module="' + esc(m.key) + '"' + on + '>' +
+      '<span><span class="font-medium">' + esc(m.name) + '</span>' +
+      '<span class="block text-xs text-gray-400 leading-4">' + esc(m.desc || '') + '</span></span>' +
+    '</label>';
+  }).join('');
+}
+
+function openAccountModal(staffId) {
+  const row = staffId ? staffAccountsCache.find(function (x) { return x.id === staffId; }) : null;
+  const isAdmin = row && row.role === 'admin';
+  $('accountStaffId').value = row ? row.id : '';
+  $('accountModalTitle').textContent = row ? '编辑账号' : '新增账号';
+  $('accountUsername').value = row ? row.username : '';
+  $('accountUsername').disabled = !!row;
+  $('accountUsername').classList.toggle('bg-gray-100', !!row);
+  $('accountDisplayName').value = row ? row.display_name : '';
+  $('accountPassword').value = '';
+  $('accountPasswordHint').textContent = row ? '密码留空则不修改；如需重置，至少输入 6 位。' : '新增账号必须设置密码，至少 6 位。';
+  $('accountError').textContent = '';
+  $('accountAdminNote').classList.toggle('hidden', !isAdmin);
+  $('accountPermissionWrap').classList.toggle('hidden', !!isAdmin);
+  $('accountActive').checked = row ? !!row.is_active : true;
+  $('accountActive').disabled = !!isAdmin;
+  if (!isAdmin) renderAccountPermissionOptions(row ? row.permissions : ['home', 'sale', 'orderList', 'detail']);
+  const modal = $('accountModal');
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+
+function closeAccountModal() {
+  const modal = $('accountModal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+function setAllAccountPermissions(on) {
+  document.querySelectorAll('.account-perm').forEach(function (el) { el.checked = !!on; });
+}
+
+function selectedAccountPermissions() {
+  return Array.from(document.querySelectorAll('.account-perm:checked')).map(function (el) { return el.dataset.module; });
+}
+
+async function saveAccount() {
+  const staffId = $('accountStaffId').value;
+  const username = $('accountUsername').value.trim();
+  const displayName = $('accountDisplayName').value.trim();
+  const password = $('accountPassword').value;
+  const roleAdmin = staffId && (staffAccountsCache.find(function (x) { return x.id === Number(staffId); }) || {}).role === 'admin';
+  const permissions = selectedAccountPermissions();
+  const errorBox = $('accountError');
+  errorBox.textContent = '';
+
+  if (!displayName) { errorBox.textContent = '请填写姓名/显示名称'; return; }
+  if (!staffId && !username) { errorBox.textContent = '请填写登录账号'; return; }
+  if (!staffId && password.length < 6) { errorBox.textContent = '新增账号密码至少 6 位'; return; }
+  if (password && password.length < 6) { errorBox.textContent = '密码至少 6 位'; return; }
+  if (!roleAdmin && !permissions.length) { errorBox.textContent = '请至少分配一个模块权限'; return; }
+
+  const body = {
+    display_name: displayName,
+    password: password || null,
+    is_active: $('accountActive').checked,
+  };
+  if (!roleAdmin) body.permissions = permissions;
+  if (!staffId) {
+    body.username = username;
+    body.permissions = permissions;
+  }
+
+  try {
+    if (staffId) await api('/staff/' + staffId, { method: 'PUT', body: body });
+    else await api('/staff', { method: 'POST', body: body });
+    closeAccountModal();
+    await loadStaffAccounts();
+    toast(staffId ? '账号已更新' : '账号已创建', 'ok');
+  } catch (err) {
+    errorBox.textContent = err.message;
+  }
+}
+
+async function toggleAccountActive(staffId, active) {
+  const row = staffAccountsCache.find(function (x) { return x.id === staffId; });
+  if (!row) return;
+  if (!confirm((active ? '启用' : '停用') + '账号“' + row.username + '”？')) return;
+  try {
+    await api('/staff/' + staffId, { method: 'PUT', body: { is_active: active } });
+    await loadStaffAccounts();
+    toast(active ? '账号已启用' : '账号已停用', 'ok');
+  } catch (err) { toast(err.message, 'err'); }
 }
 
 /* ==================== 首页 ==================== */
@@ -5341,15 +5512,10 @@ function boot() {
   }
   $('sellDate').value = todayStr();
   applyPaper(currentPaper, false);
-  $('loginApiBase').value = getApiBase() || 'http://127.0.0.1:8000/api';
   if (token) {
     restoreSession();
   } else {
-    const localPage = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-    if (!localPage && /(127\.0\.0\.1|localhost)/.test($('loginApiBase').value)) {
-      $('loginError').textContent = '当前页面不是本地环境，请把 API 地址改成你服务器的 HTTPS 地址';
-    }
-    showLogin($('loginError').textContent);
+    showLogin('');
   }
 }
 
