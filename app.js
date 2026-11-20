@@ -7,6 +7,9 @@
 
 const TOKEN_KEY = 'billing_token';
 const API_KEY = 'billing_api_base';
+const LOGIN_ACCOUNTS_KEY = 'billing_login_accounts';
+const LOGIN_LAST_ACCOUNT_KEY = 'billing_login_last_account';
+let desktopLoginStore = null;
 let token = localStorage.getItem(TOKEN_KEY) || '';
 let currentUser = null;
 let shopInfo = { name: '', addr: '', tel: '' };
@@ -282,6 +285,75 @@ function buildQuery(obj) {
 }
 
 /* ==================== 登录 ==================== */
+function savedLoginAccounts() {
+  try {
+    const list = desktopLoginStore
+      ? (desktopLoginStore.accounts || [])
+      : JSON.parse(localStorage.getItem(LOGIN_ACCOUNTS_KEY) || '[]');
+    if (!Array.isArray(list)) return [];
+    const seen = {};
+    return list.filter(function (item) {
+      const name = String(item || '').trim();
+      if (!name || seen[name.toLowerCase()]) return false;
+      seen[name.toLowerCase()] = true;
+      return true;
+    }).slice(0, 20);
+  } catch (err) {
+    return [];
+  }
+}
+
+function savedLastLoginAccount() {
+  if (desktopLoginStore) return String(desktopLoginStore.last || '');
+  return localStorage.getItem(LOGIN_LAST_ACCOUNT_KEY) || '';
+}
+
+async function initLoginAccounts() {
+  if (window.billingDesktop && window.billingDesktop.getLoginAccounts) {
+    try {
+      const data = await window.billingDesktop.getLoginAccounts();
+      if (data && data.ok) desktopLoginStore = { accounts: data.accounts || [], last: data.last || '' };
+    } catch (err) { /* 读取失败时退回浏览器本地存储 */ }
+  }
+  renderLoginAccounts();
+}
+
+function renderLoginAccounts() {
+  const list = savedLoginAccounts();
+  const input = $('loginUsername');
+  const options = $('loginUsernameOptions');
+  if (options) {
+    options.innerHTML = list.map(function (name) {
+      return '<option value="' + esc(name) + '"></option>';
+    }).join('');
+  }
+  if (!input) return;
+  if (input.value.trim()) return;
+  let last = savedLastLoginAccount();
+  if (!list.some(function (name) { return name.toLowerCase() === last.toLowerCase(); })) last = list[0] || '';
+  input.value = last;
+}
+
+function rememberLoginAccount(username) {
+  const name = String(username || '').trim();
+  if (!name) return;
+  const list = savedLoginAccounts().filter(function (item) {
+    return item.toLowerCase() !== name.toLowerCase();
+  });
+  list.unshift(name);
+  const saved = { accounts: list.slice(0, 20), last: name };
+  try {
+    if (window.billingDesktop && window.billingDesktop.saveLoginAccounts) {
+      desktopLoginStore = saved;
+      window.billingDesktop.saveLoginAccounts(saved).catch(function () {});
+    } else {
+      localStorage.setItem(LOGIN_ACCOUNTS_KEY, JSON.stringify(saved.accounts));
+      localStorage.setItem(LOGIN_LAST_ACCOUNT_KEY, name);
+    }
+  } catch (err) { /* 本地存储不可用时不影响登录 */ }
+  renderLoginAccounts();
+}
+
 async function doLogin() {
   const base = getApiBase();
   const username = $('loginUsername').value.trim();
@@ -309,6 +381,7 @@ async function doLogin() {
     token = json.data.token;
     localStorage.setItem(TOKEN_KEY, token);
     currentUser = json.data.staff;
+    rememberLoginAccount(username);
     $('loginPassword').value = '';
     showApp();
     await initApp();
@@ -5688,6 +5761,7 @@ function boot() {
   }
   $('sellDate').value = todayStr();
   applyPaper(currentPaper, false);
+  initLoginAccounts();
   if (token) {
     restoreSession();
   } else {
