@@ -10,6 +10,7 @@ const API_KEY = 'billing_api_base';
 const LOGIN_ACCOUNTS_KEY = 'billing_login_accounts';
 const LOGIN_LAST_ACCOUNT_KEY = 'billing_login_last_account';
 let desktopLoginStore = null;
+let currentPage = 'home';
 let token = localStorage.getItem(TOKEN_KEY) || '';
 let currentUser = null;
 let shopInfo = { name: '', addr: '', tel: '' };
@@ -19,6 +20,7 @@ let priceMap = {};              // goods_id -> {price, history, ...}（当前客
 let printPrefMap = {};          // goods_id -> true：该客户打印这张商品时隐藏规格
 let currentCustomer = null;
 let sellRows = [];
+let sellRowsDirty = false;
 let currentEditRowIndex = null;
 let nameSuggestTimer = null;
 let nameSuggest = { index: null, items: [], active: -1, kw: '', offset: 0, hasMore: false, loading: false };
@@ -638,13 +640,14 @@ function switchPage(pageName, keepOrderEdit) {
     exitOrderEdit();
   }
   // 切页时把可能残留的弹窗层收掉，避免透明遮罩盖住新页面导致“鼠标点了没反应”。
-  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'accountModal', 'printPreviewModal'].forEach(function (id) {
+  ['productModal', 'batchModal', 'priceModal', 'customerModal', 'goodsModal', 'accountModal', 'purchaseDetailModal', 'printPreviewModal'].forEach(function (id) {
     const modal = $(id);
     if (modal && !modal.classList.contains('hidden')) {
       modal.classList.add('hidden');
       modal.classList.remove('flex');
     }
   });
+  currentPage = pageName;
   setMenuActive(pageName);
   closeNameSuggest();
   closeSpecSuggest();
@@ -658,14 +661,14 @@ function switchPage(pageName, keepOrderEdit) {
   if (target) target.classList.remove('hidden');
   const focusWasHidden = releaseHiddenFocus();
 
-  if (['sale', 'purchase', 'stock', 'customerManage', 'setting'].indexOf(pageName) >= 0) {
-    refreshGoods().catch(function () {});
-  }
-  if (['sale', 'customerManage'].indexOf(pageName) >= 0) {
-    refreshCustomers().catch(function () {});
-  }
-
+  // 商品和客户资料在登录时已加载，并会在新增/修改/导入后主动刷新。
+  // 这里不再每次切页都重新拉全量数据并重绘商品表/客户表，否则几百条数据会
+  // 在主线程里连续生成大段 HTML，开单页的输入框也会短暂“点不动”。
   if (pageName === 'sale') {
+    if (sellRowsDirty) {
+      renderSellTable();
+      sellRowsDirty = false;
+    }
     renderShopInfo();
     setSaleModeUI();
     loadStockConfig();
@@ -681,7 +684,7 @@ function switchPage(pageName, keepOrderEdit) {
   if (pageName === 'detail') loadDetailList();
   if (pageName === 'customerManage') renderCustomerManage();
   if (pageName === 'purchase') loadPurchasePage();
-  if (pageName === 'stock') { renderGoodsManage(); refreshGoods().catch(function () {}); }
+  if (pageName === 'stock') renderGoodsManage();
   if (pageName === 'stat') initStatPage();
   if (pageName === 'setting') { fillSettings(); loadStockConfig(); loadMemoGoodsSelect(); }
   if (pageName === 'accounts') loadStaffAccounts();
@@ -1006,7 +1009,7 @@ async function refreshCustomers() {
       if ($('custTel')) $('custTel').value = fresh.tel || '';
     }
   }
-  renderCustomerManage();
+  if (currentPage === 'customerManage') renderCustomerManage();
 }
 
 function findCustomer(id) {
@@ -1517,6 +1520,7 @@ function renderSellTable() {
       '<td><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.remark) + '" placeholder="备注" oninput="sellRows[' + index + '].remark=this.value"' + dis + '></td>' +
       '</tr>';
   }).join('');
+  sellRowsDirty = false;
   calcTotal();
 }
 
@@ -2729,7 +2733,7 @@ async function refreshGoods() {
   } else {
     priceMap = {};
   }
-  renderGoodsManage();
+  if (currentPage === 'stock') renderGoodsManage();
   syncSellRowsWithGoods();
 }
 
@@ -2753,7 +2757,13 @@ function syncSellRowsWithGoods() {
     row.specOptions = [];
     changed = true;
   });
-  if (changed && $('sellTableBody') && !isOrderLocked()) renderSellTable();
+  if (changed) {
+    sellRowsDirty = true;
+    if (currentPage === 'sale' && $('sellTableBody') && !isOrderLocked()) {
+      renderSellTable();
+      sellRowsDirty = false;
+    }
+  }
 }
 
 function unitsText(goods) {
