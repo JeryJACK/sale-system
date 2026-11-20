@@ -232,7 +232,7 @@
       <div class="bg-white rounded border overflow-hidden">
         <div class="bg-tableHeader text-white px-4 py-2 font-medium flex justify-between items-center">
           <span>最近订单</span>
-          <button onclick="switchPage('sale')" class="text-xs border border-white/50 rounded px-2 py-0.5 hover:bg-white/10">去开单</button>
+          <button data-perm="sale" onclick="switchPage('sale')" class="text-xs border border-white/50 rounded px-2 py-0.5 hover:bg-white/10">去开单</button>
         </div>
         <div class="p-4 overflow-x-auto">
           <table class="w-full text-sm border">
@@ -334,7 +334,7 @@
               </colgroup>
               <thead class="bg-gray-100">
                 <tr>
-                  <th class="w-10 py-2"><button id="addRowBtn" onclick="addRow()" class="text-green-600 text-xl leading-none" title="新增一行">＋</button></th>
+                  <th class="w-10 py-2"><button id="addRowBtn" data-perm="sale.addRow" onclick="addRow()" class="text-green-600 text-xl leading-none" title="新增一行">＋</button></th>
                   <th class="py-2">编码</th>
                   <th class="py-2">品名</th>
                   <th class="py-2">规格</th>
@@ -357,15 +357,15 @@
             <div class="flex items-center gap-3">
               <div class="flex items-center gap-1">
                 <span class="text-sm text-gray-600">纸张</span>
-                <button type="button" data-paper="a4" onclick="onPaperChange('a4')" class="paper-btn">A4</button>
-                <button type="button" data-paper="f1" onclick="onPaperChange('f1')" class="paper-btn">一等分</button>
-                <button type="button" data-paper="f2" onclick="onPaperChange('f2')" class="paper-btn">二等分</button>
-                <button type="button" data-paper="f3" onclick="onPaperChange('f3')" class="paper-btn">三等分</button>
+                <button type="button" data-perm="sale.print,orderList.print" data-paper="a4" onclick="onPaperChange('a4')" class="paper-btn">A4</button>
+                <button type="button" data-perm="sale.print,orderList.print" data-paper="f1" onclick="onPaperChange('f1')" class="paper-btn">一等分</button>
+                <button type="button" data-perm="sale.print,orderList.print" data-paper="f2" onclick="onPaperChange('f2')" class="paper-btn">二等分</button>
+                <button type="button" data-perm="sale.print,orderList.print" data-paper="f3" onclick="onPaperChange('f3')" class="paper-btn">三等分</button>
               </div>
               <button id="btnBackOrder" onclick="backToOrderList()" class="hidden border border-gray-300 text-gray-600 px-4 py-2 rounded">返回</button>
-              <button id="btnVoidOrder" onclick="voidCurrentOrder()" class="hidden bg-red-500 text-white px-4 py-2 rounded">作废单据</button>
-              <button onclick="printSellBill()" class="bg-green-500 text-white px-4 py-2 rounded">打印单据</button>
-              <button id="btnSaveOrder" onclick="saveSellOrder()" class="bg-primaryBlue text-white px-4 py-2 rounded">保存单据</button>
+              <button id="btnVoidOrder" data-perm="orderList.void" onclick="voidCurrentOrder()" class="hidden bg-red-500 text-white px-4 py-2 rounded">作废单据</button>
+              <button data-perm="sale.print,orderList.print" onclick="printSellBill()" class="bg-green-500 text-white px-4 py-2 rounded">打印单据</button>
+              <button id="btnSaveOrder" data-perm="sale.save,orderList.edit" onclick="saveSellOrder()" class="bg-primaryBlue text-white px-4 py-2 rounded">保存单据</button>
               <button id="btnClearOrder" onclick="clearSellForm()" class="bg-gray-400 text-white px-4 py-2 rounded">清空</button>
             </div>
           </div>
@@ -385,8 +385,8 @@
             <input type="date" id="orderTo" class="border px-2 py-1">
             <button onclick="loadOrders()" class="bg-primaryBlue text-white px-3 py-1 rounded">查询</button>
             <button onclick="resetOrderFilters()" class="border px-3 py-1 rounded text-gray-600">重置</button>
-            <button onclick="batchVoidOrders()" class="border border-red-300 text-red-600 px-3 py-1 rounded">批量作废</button>
-            <button onclick="batchReturnOrders()" class="border border-orange-300 text-orange-600 px-3 py-1 rounded">批量退货</button>
+            <button data-perm="orderList.batch" onclick="batchVoidOrders()" class="border border-red-300 text-red-600 px-3 py-1 rounded">批量作废</button>
+            <button data-perm="orderList.batch" onclick="batchReturnOrders()" class="border border-orange-300 text-orange-600 px-3 py-1 rounded">批量退货</button>
             <span id="batchOrderHint" class="text-xs text-gray-500">未选择</span>
             <span class="text-gray-400 text-xs ml-auto" id="orderCountHint"></span>
           </div>
@@ -394,7 +394,7 @@
             <table class="w-full text-sm border">
               <thead class="bg-gray-100">
                 <tr>
-                  <th class="border px-2 py-2 w-10"><input type="checkbox" id="orderCheckAll" onclick="toggleAllOrderChecks(this)" title="全选"></th>
+                  <th class="border px-2 py-2 w-10"><input type="checkbox" id="orderCheckAll" data-perm="orderList.batch" onclick="toggleAllOrderChecks(this)" title="全选"></th>
                   <th class="border px-2 py-2">订单号</th>
                   <th class="border px-2 py-2">销售日期</th>
                   <th class="border px-2 py-2">开单时间</th>
@@ -459,12 +459,14 @@
         <div class="bg-tableHeader text-white px-4 py-2 font-medium">客户管理</div>
         <div class="p-4">
           <div class="flex flex-wrap gap-2 mb-3 items-center text-sm">
+            <div data-perm="customerManage.create" class="flex flex-wrap gap-2 items-center">
             <input id="newCustomerNo" class="border px-3 py-1 w-40 font-mono text-xs bg-gray-100" placeholder="保存后自动生成" readonly>
             <input id="newCustomerName" class="border px-3 py-1" placeholder="客户名称">
             <input id="newCustomerAddr" class="border px-3 py-1" placeholder="客户地址">
             <input id="newCustomerTel" class="border px-3 py-1" placeholder="客户电话">
             <input id="newCustomerRemark" class="border px-3 py-1" placeholder="备注">
-            <button onclick="addCustomer()" class="bg-primaryBlue text-white px-3 py-1 rounded">新增客户</button>
+            <button data-perm="customerManage.create,sale.customer" onclick="addCustomer()" class="bg-primaryBlue text-white px-3 py-1 rounded">新增客户</button>
+            </div>
             <span class="flex-1"></span>
             <input id="customerSearch" class="border px-2 py-1" placeholder="搜索编号/名称" oninput="renderCustomerManage()">
           </div>
@@ -479,6 +481,7 @@
         <div class="bg-tableHeader text-white px-4 py-2 font-medium">商品资料</div>
         <div class="p-4">
           <div class="flex flex-wrap gap-2 mb-3 items-center text-sm">
+            <div data-perm="stock.create" class="flex flex-wrap gap-2 items-center">
             <input id="newGoodsCode" class="border px-3 py-1 bg-gray-100 text-gray-500 w-32" placeholder="编码自动生成" readonly>
             <input id="newGoodsName" class="border px-3 py-1" placeholder="品名">
             <input id="newGoodsSpec" class="border px-3 py-1" placeholder="规格">
@@ -490,17 +493,18 @@
             </select>
             <input id="newGoodsShelfLife" type="number" step="1" min="0" class="border px-3 py-1 w-20" placeholder="保质期数值">
             <input id="newGoodsPrice" type="number" step="0.01" min="0" class="border px-3 py-1 w-24" placeholder="参考价">
-            <button onclick="addGoods()" class="bg-primaryBlue text-white px-3 py-1 rounded">新增商品</button>
+            <button data-perm="stock.create" onclick="addGoods()" class="bg-primaryBlue text-white px-3 py-1 rounded">新增商品</button>
+            </div>
             <span class="flex-1"></span>
             <span id="goodsSelectedCount" class="text-xs text-gray-500"></span>
-            <button id="batchDeleteGoodsBtn" onclick="batchDeleteGoods()" disabled class="border border-red-300 text-red-500 px-3 py-1 rounded disabled:opacity-40">批量删除</button>
+            <button id="batchDeleteGoodsBtn" data-perm="stock.batchDelete" onclick="batchDeleteGoods()" disabled class="border border-red-300 text-red-500 px-3 py-1 rounded disabled:opacity-40">批量删除</button>
             <input id="goodsSearch" class="border px-2 py-1" placeholder="搜索编码/品名" oninput="renderGoodsManage()">
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm border">
               <thead class="bg-gray-100">
                 <tr>
-                  <th class="border px-2 py-2 w-10"><input id="goodsCheckAll" type="checkbox" title="全选当前列表" onchange="toggleGoodsSelection(this.checked)"></th>
+                  <th class="border px-2 py-2 w-10"><input id="goodsCheckAll" data-perm="stock.batchDelete" type="checkbox" title="全选当前列表" onchange="toggleGoodsSelection(this.checked)"></th>
                   <th class="border px-2 py-2">编码</th>
                   <th class="border px-2 py-2">品名</th>
                   <th class="border px-2 py-2">规格</th>
@@ -548,7 +552,7 @@
             <table class="w-full text-sm">
               <thead class="bg-gray-100">
                 <tr>
-                  <th class="w-10 py-2"><button id="addPurchaseRowBtn" onclick="addPurchaseRow()" class="text-green-600 text-xl leading-none" title="新增一行">＋</button></th>
+                  <th class="w-10 py-2"><button id="addPurchaseRowBtn" data-perm="purchase.addRow" onclick="addPurchaseRow()" class="text-green-600 text-xl leading-none" title="新增一行">＋</button></th>
                   <th class="py-2">编码</th>
                   <th class="py-2">品名</th>
                   <th class="py-2">规格</th>
@@ -571,7 +575,7 @@
             <div class="flex items-center gap-3">
               <span id="purchaseModeHint" class="text-xs text-gray-500"></span>
               <button id="cancelPurchaseEditBtn" onclick="exitPurchaseEdit()" class="hidden border border-gray-400 text-gray-600 px-3 py-2 rounded">取消编辑</button>
-              <button id="savePurchaseBtn" onclick="savePurchase()" class="bg-primaryBlue text-white px-4 py-2 rounded">保存进货单</button>
+              <button id="savePurchaseBtn" data-perm="purchase.create,purchase.edit" onclick="savePurchase()" class="bg-primaryBlue text-white px-4 py-2 rounded">保存进货单</button>
               <button onclick="clearPurchaseForm()" class="bg-gray-400 text-white px-4 py-2 rounded">清空</button>
             </div>
           </div>
@@ -667,8 +671,8 @@
           <label class="flex items-center gap-1 text-xs text-gray-600 mb-1">
             <input type="checkbox" id="statSnapshot"> 按开单成本显示
           </label>
-          <button onclick="loadStatSummary()" class="bg-primaryBlue text-white px-3 py-1 rounded">刷新</button>
-          <button onclick="exportStatCsv()" class="border px-3 py-1 rounded text-gray-600">导出</button>
+          <button data-perm="stat" onclick="loadStatSummary()" class="bg-primaryBlue text-white px-3 py-1 rounded">刷新</button>
+          <button data-perm="stat.export" onclick="exportStatCsv()" class="border px-3 py-1 rounded text-gray-600">导出</button>
           <span id="statHint" class="text-xs text-gray-400 ml-auto"></span>
         </div>
       </div>
@@ -746,7 +750,7 @@
             </div>
             <textarea id="importGoodsText" rows="10" class="w-full border border-gray-300 px-2 py-1 font-mono text-xs" placeholder="品名,规格,单位,参考价,保质期天数&#10;海天生抽,500ml,瓶,8.50,365&#10;镇江香醋,500ml,瓶,6.00,540"></textarea>
             <div class="flex items-center gap-3 mt-2">
-              <button onclick="doImport('goods', this)" class="bg-primaryBlue text-white px-4 py-1.5 rounded">开始导入商品</button>
+              <button data-perm="import.goods" onclick="doImport('goods', this)" class="bg-primaryBlue text-white px-4 py-1.5 rounded">开始导入商品</button>
               <span id="goodsImportHint" class="text-xs text-gray-500"></span>
             </div>
             <div id="goodsImportResult" class="mt-2 text-xs"></div>
@@ -766,7 +770,7 @@
             </div>
             <textarea id="importCustomerText" rows="10" class="w-full border px-2 py-1 font-mono text-xs" placeholder="客户编号,客户名称,地址,电话,备注&#10;1001,中卫市XX商行,中卫市XX路1号,13800000000,老客户&#10;1002,兴庆区XX超市,银川市XX街,13900000000,"></textarea>
             <div class="flex items-center gap-3 mt-2">
-              <button onclick="doImport('customers', this)" class="bg-primaryBlue text-white px-4 py-1.5 rounded">开始导入客户</button>
+              <button data-perm="import.customers" onclick="doImport('customers', this)" class="bg-primaryBlue text-white px-4 py-1.5 rounded">开始导入客户</button>
               <span id="customerImportHint" class="text-xs text-gray-500"></span>
             </div>
             <div id="customerImportResult" class="mt-2 text-xs"></div>
@@ -786,7 +790,7 @@
             </div>
             <textarea id="importPriceText" rows="6" class="w-full border px-2 py-1 font-mono text-xs" placeholder="客户编号,客户名称,商品编码,价格&#10;1001,中卫市XX商行,1001,8.50&#10;1001,中卫市XX商行,1002,5.80"></textarea>
             <div class="flex items-center gap-3 mt-2">
-              <button onclick="doImport('prices', this)" class="bg-primaryBlue text-white px-4 py-1.5 rounded">开始导入价格</button>
+              <button data-perm="import.prices" onclick="doImport('prices', this)" class="bg-primaryBlue text-white px-4 py-1.5 rounded">开始导入价格</button>
               <span id="priceImportHint" class="text-xs text-gray-500"></span>
             </div>
             <div id="priceImportResult" class="mt-2 text-xs"></div>
@@ -816,7 +820,7 @@
               <label class="block mb-1">联系电话</label>
               <input id="setShopTel" class="border w-full px-3 py-2">
             </div>
-            <button onclick="saveShopInfo()" class="bg-primaryBlue text-white px-4 py-2 rounded">保存店铺信息</button>
+            <button data-perm="setting.shop" onclick="saveShopInfo()" class="bg-primaryBlue text-white px-4 py-2 rounded">保存店铺信息</button>
           </div>
         </div>
 
@@ -832,7 +836,7 @@
                 <label class="block mb-1">新密码（至少 6 位）</label>
                 <input id="setNewPassword" type="password" class="border w-full px-3 py-2" autocomplete="new-password">
               </div>
-              <button onclick="changePassword()" class="bg-primaryBlue text-white px-4 py-2 rounded">修改密码</button>
+              <button data-perm="setting" onclick="changePassword()" class="bg-primaryBlue text-white px-4 py-2 rounded">修改密码</button>
             </div>
           </div>
 
@@ -863,7 +867,7 @@
                 <input type="checkbox" id="setAllowNegative">
                 <span>批次模式允许负库存出货</span>
               </label>
-              <button onclick="saveStockConfig()" class="bg-primaryBlue text-white px-4 py-2 rounded">保存库存模式</button>
+              <button data-perm="setting.stock" onclick="saveStockConfig()" class="bg-primaryBlue text-white px-4 py-2 rounded">保存库存模式</button>
               <div class="text-xs text-gray-500 leading-5">
                 当前模式：<b id="stockModeNow">--</b>。两种模式互斥，切换不迁移历史单据；已结账月份不再重算加权成本。
               </div>
@@ -878,8 +882,8 @@
               </div>
               <div class="flex gap-2 items-center">
                 <select id="clearMemoGoods" class="border px-2 py-2 flex-1"></select>
-                <button onclick="clearDateMemo(false)" class="border px-3 py-2 rounded text-gray-700">清除该商品</button>
-                <button onclick="clearDateMemo(true)" class="border border-red-300 text-red-600 px-3 py-2 rounded">全部清除</button>
+                <button data-perm="setting.expiry,stock.shelf" onclick="clearDateMemo(false)" class="border px-3 py-2 rounded text-gray-700">清除该商品</button>
+                <button data-perm="setting.expiry,stock.shelf" onclick="clearDateMemo(true)" class="border border-red-300 text-red-600 px-3 py-2 rounded">全部清除</button>
               </div>
             </div>
           </div>
@@ -950,7 +954,7 @@
         <input id="addProdName" class="border px-2 py-1 flex-1" placeholder="品名">
         <input id="addProdSpec" class="border px-2 py-1 w-32" placeholder="规格">
         <input id="addProdUnit" list="unitOptions" class="border px-2 py-1 w-20" placeholder="单位">
-        <button onclick="addProduct()" class="bg-green-500 text-white px-2 py-1">新增</button>
+        <button data-perm="sale.goods" onclick="addProduct()" class="bg-green-500 text-white px-2 py-1">新增</button>
       </div>
     </div>
   </div>
@@ -1033,7 +1037,7 @@
       <div><label class="block mb-1">备注</label><input id="editCustomerRemark" class="border w-full px-3 py-2"></div>
       <div class="flex justify-end gap-2">
         <button onclick="closeCustomerModal()" class="border px-4 py-1.5 rounded">取消</button>
-        <button onclick="saveCustomerEdit()" class="bg-primaryBlue text-white px-4 py-1.5 rounded">保存</button>
+        <button data-perm="customerManage.edit" onclick="saveCustomerEdit()" class="bg-primaryBlue text-white px-4 py-1.5 rounded">保存</button>
       </div>
     </div>
   </div>
@@ -1085,7 +1089,7 @@
       </div>
       <div class="flex justify-end gap-2 pt-1">
         <button onclick="closeGoodsModal()" class="border px-4 py-1.5 rounded">取消</button>
-        <button onclick="saveGoodsEdit()" class="bg-primaryBlue text-white px-4 py-1.5 rounded">保存</button>
+        <button data-perm="stock.edit,stock.price,stock.shelf,stock.pack" onclick="saveGoodsEdit()" class="bg-primaryBlue text-white px-4 py-1.5 rounded">保存</button>
       </div>
     </div>
   </div>
@@ -1093,7 +1097,7 @@
 
 <!-- ==================== 账号编辑弹窗 ==================== -->
 <div id="accountModal" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-50 no-print">
-  <div class="bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col" style="width:620px;max-width:94vw;max-height:88vh;">
+  <div class="bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col" style="width:780px;max-width:96vw;max-height:90vh;">
     <div class="bg-tableHeader text-white px-4 py-2 flex justify-between items-center shrink-0">
       <span id="accountModalTitle">新增账号</span>
       <button onclick="closeAccountModal()" class="text-white text-xl leading-none" title="关闭">&times;</button>
@@ -1116,18 +1120,21 @@
         <div id="accountPasswordHint" class="text-xs text-gray-400 mt-1">新增账号必须设置密码，至少 6 位。</div>
       </div>
       <div id="accountAdminNote" class="hidden rounded bg-blue-50 border border-blue-200 p-2 text-xs text-blue-700">
-        管理员账号固定拥有全部模块权限，不能停用；这里只可修改姓名和密码。
+        管理员账号固定拥有全部板块和按钮权限，不能停用；这里只可修改姓名和密码。
       </div>
       <div id="accountPermissionWrap">
         <div class="flex items-center justify-between mb-2">
-          <label class="font-medium">模块权限</label>
+          <div>
+            <label class="font-medium">板块与按钮权限</label>
+            <span class="text-xs text-gray-400 ml-2">勾选板块后才能进入；板块内按钮/字段可单独取消</span>
+          </div>
           <div class="flex gap-3 text-xs">
             <button type="button" onclick="setAllAccountPermissions(true)" class="text-primaryBlue">全选</button>
             <button type="button" onclick="setAllAccountPermissions(false)" class="text-gray-500">清空</button>
           </div>
         </div>
-        <div id="accountPermissionList" class="grid grid-cols-2 gap-x-4 gap-y-2"></div>
-        <div class="text-xs text-gray-400 mt-2">至少选择一个模块；账号管理仅管理员可见，不参与分配。</div>
+        <div id="accountPermissionList" class="grid grid-cols-1 gap-2 max-h-[46vh] overflow-y-auto pr-1"></div>
+        <div class="text-xs text-gray-400 mt-2">只勾板块不勾按钮＝只能查看该板块；至少选择一个板块。账号管理仅管理员可见，不参与分配。</div>
       </div>
       <label class="flex items-center gap-2">
         <input type="checkbox" id="accountActive" checked>
@@ -1302,9 +1309,14 @@
 
 <script src="./assets/echarts.min.js"></script>
 <script src="./config.js?v=20261120a"></script>
-<script src="./app.js?v=20261120a"></script>
+<script src="./app.js?v=20261120b"></script>
 </body>
 </html>
+
+
+
+
+
 
 
 
