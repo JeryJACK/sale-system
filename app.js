@@ -388,11 +388,51 @@ function canDoAny(keys) {
   return (keys || []).some(function (key) { return granted.indexOf(key) >= 0; });
 }
 
+function canView(key) {
+  if (!currentUser) return false;
+  if (currentUser.role === 'admin') return true;
+  return (currentUser.permissions || []).indexOf(key + '.view') >= 0;
+}
+
+function canViewAny(keys) {
+  return (keys || []).some(canView);
+}
+
+function canShow(key) {
+  return canDo(key) || canView(key);
+}
+
+function canShowAny(keys) {
+  return canDoAny(keys) || canViewAny(keys);
+}
+
+function permButtonClass(keys, editableClass) {
+  if (canDoAny(keys)) return editableClass;
+  if (canViewAny(keys)) return 'text-gray-400 opacity-50 cursor-not-allowed';
+  return 'hidden';
+}
+
+function permButtonDisabled(keys) {
+  return canDoAny(keys) ? '' : ' disabled';
+}
+
 function applyDataPermissions() {
   document.querySelectorAll('[data-perm]').forEach(function (el) {
     const keys = String(el.dataset.perm || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
     if (!keys.length) return;
-    el.classList.toggle('hidden', !canDoAny(keys));
+    const editable = canDoAny(keys);
+    const readable = !editable && canViewAny(keys);
+    el.classList.toggle('hidden', !(editable || readable));
+    if (!readable) return;
+    el.classList.add('opacity-50', 'cursor-not-allowed');
+    el.querySelectorAll('input, textarea, select, button').forEach(function (child) {
+      child.disabled = true;
+    });
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) {
+      el.disabled = true;
+    } else if (el.tagName === 'BUTTON') {
+      el.disabled = true;
+    }
   });
 }
 
@@ -628,9 +668,13 @@ function permissionSummary(row) {
   if (row.role === 'admin') return '全部板块和按钮';
   const granted = row.permissions || [];
   const parts = accountModulesCache.filter(function (m) { return granted.indexOf(m.key) >= 0; }).map(function (m) {
-    const count = (m.actions || []).filter(function (a) { return granted.indexOf(a.key) >= 0; }).length;
     if (!m.actions || !m.actions.length) return m.name;
-    return m.name + (count ? '（' + count + '项操作）' : '（仅查看）');
+    const editCount = m.actions.filter(function (a) { return granted.indexOf(a.key) >= 0; }).length;
+    const viewCount = m.actions.filter(function (a) { return granted.indexOf(a.key + '.view') >= 0; }).length;
+    const detail = [];
+    if (editCount) detail.push(editCount + '项可操作');
+    if (viewCount) detail.push(viewCount + '项仅查看');
+    return m.name + '（' + (detail.join('，') || '仅可进入') + '）';
   });
   return parts.join('、') || '未分配';
 }
@@ -693,13 +737,20 @@ function renderAccountPermissionOptions(selected) {
   $('accountPermissionList').innerHTML = accountModulesCache.map(function (m) {
     const moduleOn = checked.indexOf(m.key) >= 0;
     const actions = (m.actions || []).map(function (a) {
-      const on = checked.indexOf(a.key) >= 0 ? ' checked' : '';
-      return '<label class="flex items-start gap-1.5 rounded border border-gray-200 px-2 py-1.5 cursor-pointer hover:bg-blue-50">' +
-        '<input type="checkbox" class="account-action mt-0.5" data-perm-key="' + esc(a.key) + '" data-parent="' + esc(m.key) + '"' + on +
-        ' onchange="toggleAccountAction(this)">' +
-        '<span class="leading-4"><span class="text-xs font-medium text-gray-700">' + esc(a.name) + '</span>' +
-        '<span class="block text-[11px] text-gray-400 leading-4">' + esc(a.desc || '') + '</span></span>' +
-      '</label>';
+      const editOn = checked.indexOf(a.key) >= 0;
+      const viewOn = checked.indexOf(a.key + '.view') >= 0;
+      return '<div class="flex items-start gap-1.5 rounded border border-gray-200 px-2 py-1.5 hover:bg-blue-50">' +
+        '<label class="flex items-start gap-1.5 flex-1 min-w-0 cursor-pointer">' +
+          '<input type="checkbox" class="account-action mt-0.5" data-perm-key="' + esc(a.key) + '" data-parent="' + esc(m.key) + '"' +
+          (editOn ? ' checked' : '') + (viewOn ? ' disabled' : '') + ' onchange="toggleAccountAction(this)">' +
+          '<span class="leading-4"><span class="text-xs font-medium text-gray-700">' + esc(a.name) + '</span>' +
+          '<span class="block text-[11px] text-gray-400 leading-4">' + esc(a.desc || '') + '</span></span>' +
+        '</label>' +
+        '<label class="flex items-center gap-1 shrink-0 text-[11px] text-gray-500 cursor-pointer mt-0.5">' +
+          '<input type="checkbox" class="account-view" data-perm-key="' + esc(a.key) + '" data-parent="' + esc(m.key) + '"' +
+          (viewOn ? ' checked' : '') + ' onchange="toggleAccountView(this)">仅查看' +
+        '</label>' +
+      '</div>';
     }).join('');
     return '<div class="account-module-card border rounded-lg overflow-hidden bg-white">' +
       '<label class="flex items-center gap-2 px-3 py-2 bg-gray-50 cursor-pointer">' +
@@ -719,14 +770,33 @@ function toggleAccountModule(el) {
   if (!card) return;
   card.querySelectorAll('.account-action').forEach(function (child) {
     child.checked = el.checked;
+    child.disabled = false;
   });
+  card.querySelectorAll('.account-view').forEach(function (child) { child.checked = false; });
 }
 
 function toggleAccountAction(el) {
+  const card = el.closest('.account-module-card');
+  if (!card) return;
   if (el.checked) {
-    const card = el.closest('.account-module-card');
-    const moduleBox = card ? card.querySelector('.account-perm') : null;
+    const viewBox = card.querySelector('.account-view[data-perm-key="' + el.dataset.permKey + '"]');
+    if (viewBox) viewBox.checked = false;
+    const moduleBox = card.querySelector('.account-perm');
     if (moduleBox) moduleBox.checked = true;
+  }
+}
+
+function toggleAccountView(el) {
+  const card = el.closest('.account-module-card');
+  if (!card) return;
+  const actionBox = card.querySelector('.account-action[data-perm-key="' + el.dataset.permKey + '"]');
+  const moduleBox = card.querySelector('.account-perm');
+  if (el.checked) {
+    if (actionBox) { actionBox.checked = false; actionBox.disabled = true; }
+    if (moduleBox) moduleBox.checked = true;
+  } else if (actionBox) {
+    actionBox.disabled = false;
+    actionBox.checked = true;
   }
 }
 
@@ -759,13 +829,18 @@ function closeAccountModal() {
 }
 
 function setAllAccountPermissions(on) {
-  document.querySelectorAll('.account-perm, .account-action').forEach(function (el) { el.checked = !!on; });
+  document.querySelectorAll('.account-perm, .account-action').forEach(function (el) {
+    el.checked = !!on;
+    if (el.classList.contains('account-action')) el.disabled = false;
+  });
+  document.querySelectorAll('.account-view').forEach(function (el) { el.checked = false; });
 }
 
 function selectedAccountPermissions() {
   const selected = [];
   document.querySelectorAll('.account-perm:checked').forEach(function (el) { selected.push(el.dataset.module); });
   document.querySelectorAll('.account-action:checked').forEach(function (el) { selected.push(el.dataset.permKey); });
+  document.querySelectorAll('.account-view:checked').forEach(function (el) { selected.push(el.dataset.permKey + '.view'); });
   return selected;
 }
 
@@ -902,9 +977,9 @@ function renderCustomerManage() {
         '<td class="border px-2 py-1 text-center">￥' + money(c.total_amount) + '</td>' +
         '<td class="border px-2 py-1 text-center">' + esc(c.last_order_date || '-') + '</td>' +
         '<td class="border px-2 py-1 text-center whitespace-nowrap">' +
-        '<button onclick="openPriceModalById(\'' + esc(c.id) + '\')" class="' + (canDoAny(['customerManage.price', 'sale.price']) ? 'text-primaryBlue' : 'hidden') + ' mr-2">价格表</button>' +
-        '<button onclick="openCustomerEdit(\'' + esc(c.id) + '\')" class="' + (canDo('customerManage.edit') ? 'text-gray-600' : 'hidden') + ' mr-2">编辑</button>' +
-        '<button onclick="deleteCustomer(\'' + esc(c.id) + '\')" class="' + (canDo('customerManage.delete') ? 'text-red-500' : 'hidden') + '">停用</button>' +
+        '<button onclick="openPriceModalById(\'' + esc(c.id) + '\')" class="' + (canDoAny(['customerManage.price', 'sale.price']) ? 'text-primaryBlue' : (canViewAny(['customerManage.price', 'sale.price']) ? 'text-gray-500' : 'hidden')) + ' mr-2">价格表</button>' +
+        '<button onclick="openCustomerEdit(\'' + esc(c.id) + '\')" class="' + (canDo('customerManage.edit') ? 'text-gray-600' : (canView('customerManage.edit') ? 'text-gray-500' : 'hidden')) + ' mr-2">编辑</button>' +
+        '<button onclick="deleteCustomer(\'' + esc(c.id) + '\')" class="' + permButtonClass(['customerManage.delete'], 'text-red-500') + '"' + permButtonDisabled(['customerManage.delete']) + '>停用</button>' +
         '</td></tr>';
     }).join('') : '<tr><td colspan="8" class="text-center text-gray-400 py-6">暂无客户，请新增或到“数据导入”导入客户信息</td></tr>') +
     '</tbody></table>';
@@ -1233,8 +1308,8 @@ function unitSelectHtml(row, index, dis) {
 
 function purchaseUnitSelectHtml(row, index) {
   const units = row.units || [];
-  if (!units.length) {
-    return '<input class="w-full border px-1 py-1" value="' + esc(row.unit) + '" onchange="purchaseRows[' + index + '].unit=this.value">';
+  if (!units.length || units.length === 1 || row.allowUnitEdit) {
+    return '<input class="w-full border px-1 py-1" list="unitOptions" placeholder="单位" value="' + esc(row.unit) + '" oninput="purchaseRows[' + index + '].unit=this.value" onchange="onPurchaseUnitCommit(' + index + ',this.value)">';
   }
   return '<select class="w-full border px-1 py-1" onchange="onPurchaseUnitCommit(' + index + ',this.value)">' +
     units.map(function (u) {
@@ -1342,7 +1417,7 @@ function renderSellTable() {
         ? '请先选择客户'
         : (locked ? '单据已锁定' : (row.hideSpec ? '打印规格已隐藏，点击恢复显示' : '打印时显示规格，点击隐藏')));
     return '<tr class="border-b' + (row.hideSpec ? ' print-spec-hidden-row' : '') + '">' +
-      '<td class="text-center"><button onclick="delRow(' + index + ')" class="' + (canDo('sale.delRow') ? 'text-red-500' : 'hidden') + ' text-lg leading-none" title="删除本行"' + dis + '>－</button></td>' +
+      '<td class="text-center"><button onclick="delRow(' + index + ')" class="' + permButtonClass(['sale.delRow'], 'text-red-500') + ' text-lg leading-none" title="删除本行"' + (canDo('sale.delRow') ? dis : ' disabled') + '>－</button></td>' +
       '<td><input class="w-full min-w-0 border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码（点此选择）" ' +
       'oninput="sellRows[' + index + '].pid=this.value" onchange="onPidChange(' + index + ')" ' +
       'onclick="if(!this.disabled&&!sellRows[' + index + '].pid)openProductModal(' + index + ')" ' +
@@ -2680,7 +2755,7 @@ function renderGoodsManage() {
 
   tbody.innerHTML = list.length ? list.map(function (g) {
     return '<tr class="border-b hover:bg-blue-50">' +
-      '<td class="border px-2 py-1 text-center">' + (canDo('stock.batchDelete') ? '<input type="checkbox" class="goods-row-check" value="' + g.id + '" onchange="updateGoodsSelection()">' : '') + '</td>' +
+      '<td class="border px-2 py-1 text-center">' + (canShow('stock.batchDelete') ? '<input type="checkbox" class="goods-row-check" value="' + g.id + '" onchange="updateGoodsSelection()"' + (canDo('stock.batchDelete') ? '' : ' disabled') + '>' : '') + '</td>' +
       '<td class="border px-2 py-1">' + esc(g.code) + '</td>' +
       '<td class="border px-2 py-1 font-medium">' + esc(g.name) + '</td>' +
       '<td class="border px-2 py-1">' + esc(g.spec || '-') + '</td>' +
@@ -2688,8 +2763,8 @@ function renderGoodsManage() {
       '<td class="border px-2 py-1 text-center">' + esc(shelfLifeText(g.shelf_life_days)) + '</td>' +
       '<td class="border px-2 py-1 text-center">' + (g.default_price !== null && g.default_price !== undefined ? '￥' + money(g.default_price) : '-') + '</td>' +
       '<td class="border px-2 py-1 text-center whitespace-nowrap">' +
-      '<button onclick="openGoodsEdit(' + g.id + ')" class="' + (canDoAny(['stock.edit', 'stock.price', 'stock.shelf', 'stock.pack']) ? 'text-gray-600' : 'hidden') + ' mr-2">编辑</button>' +
-      '<button onclick="deleteGoods(' + g.id + ')" class="' + (canDo('stock.delete') ? 'text-red-500' : 'hidden') + '">删除</button>' +
+      '<button onclick="openGoodsEdit(' + g.id + ')" class="' + (canDoAny(['stock.edit', 'stock.price', 'stock.shelf', 'stock.pack']) ? 'text-gray-600' : (canViewAny(['stock.edit', 'stock.price', 'stock.shelf', 'stock.pack']) ? 'text-gray-500' : 'hidden')) + ' mr-2">编辑</button>' +
+      '<button onclick="deleteGoods(' + g.id + ')" class="' + permButtonClass(['stock.delete'], 'text-red-500') + '"' + permButtonDisabled(['stock.delete']) + '>删除</button>' +
       '</td></tr>';
   }).join('') : '<tr><td colspan="8" class="text-center text-gray-400 py-6">暂无商品，请新增或到“数据导入”导入商品</td></tr>';
   if ($('goodsCheckAll')) $('goodsCheckAll').checked = false;
@@ -2802,7 +2877,7 @@ let goodsEditDefaults = { sale: '', purchase: '' };
 function openGoodsEdit(id) {
   const goods = findGoodsById(id);
   if (!goods) return;
-  if (!canDoAny(['stock.edit', 'stock.price', 'stock.shelf', 'stock.pack'])) return;
+  if (!canShowAny(['stock.edit', 'stock.price', 'stock.shelf', 'stock.pack'])) return;
   goodsModalReturnFocus = document.activeElement;
   goodsEditDefaults = {
     sale: goods.default_sale_unit || goods.base_unit || goods.unit || '',
@@ -2940,6 +3015,7 @@ function renderPriceRows() {
 
   tbody.innerHTML = list.length ? list.map(function (p) {
     const canPrice = canDoAny(['customerManage.price', 'sale.price']);
+    const canPriceView = !canPrice && canViewAny(['customerManage.price', 'sale.price']);
     const history = (p.history || []).map(function (h) {
       return '<span class="whitespace-nowrap mr-2">' + money(h.price) +
         '<span class="text-gray-400 text-xs">(' + esc((h.date || '').slice(5)) + ')</span></span>';
@@ -2955,7 +3031,7 @@ function renderPriceRows() {
       '<td class="border px-2 py-1 text-center">' + current + '</td>' +
       '<td class="border px-2 py-1 text-xs">' + (history || '<span class="text-gray-400">无</span>') + '</td>' +
       '<td class="border px-2 py-1 text-center"><input id="priceInput_' + p.goods_id + '" type="number" step="0.01" min="0" class="border w-24 px-1 py-0.5 text-right" value="' + (p.price !== null && p.price !== undefined ? money(p.price) : '') + '"' + (canPrice ? '' : ' disabled') + '></td>' +
-      '<td class="border px-2 py-1 text-center"><button onclick="savePrice(' + p.goods_id + ')" class="' + (canPrice ? 'bg-primaryBlue text-white' : 'hidden') + ' px-2 py-0.5 rounded text-xs">保存</button></td>' +
+      '<td class="border px-2 py-1 text-center"><button onclick="savePrice(' + p.goods_id + ')" class="' + (canPrice ? 'bg-primaryBlue text-white' : (canPriceView ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'hidden')) + ' px-2 py-0.5 rounded text-xs"' + (canPrice ? '' : ' disabled') + '>保存</button></td>' +
       '</tr>';
   }).join('') : '<tr><td colspan="8" class="text-center text-gray-400 py-6">没有匹配的商品</td></tr>';
 }
@@ -3024,10 +3100,12 @@ function setSaleModeUI() {
   $('editOrderNotice').classList.toggle('hidden', !isEdit);
   $('btnBackArrow').classList.toggle('hidden', !isEdit);
   $('btnBackOrder').classList.toggle('hidden', !isEdit);
-  $('btnVoidOrder').classList.toggle('hidden', !isEdit || locked || !canDo('orderList.void'));
+  $('btnVoidOrder').classList.toggle('hidden', !isEdit || locked || !canShow('orderList.void'));
+  $('btnVoidOrder').disabled = !canDo('orderList.void');
   $('btnSaveOrder').textContent = isEdit ? '保存修改' : '保存单据';
-  $('btnSaveOrder').classList.toggle('hidden', !(isEdit ? canDoAny(['sale.save', 'orderList.edit']) : canDo('sale.save')));
-  $('btnSaveOrder').disabled = isEdit && locked;
+  $('btnSaveOrder').classList.toggle('hidden', !(isEdit ? canShowAny(['sale.save', 'orderList.edit']) : canShow('sale.save')));
+  $('btnSaveOrder').disabled = isEdit ? locked : false;
+  $('btnSaveOrder').disabled = $('btnSaveOrder').disabled || !(isEdit ? canDoAny(['sale.save', 'orderList.edit']) : canDo('sale.save'));
   $('btnClearOrder').disabled = isEdit && locked;
   $('sellCustomerInput').disabled = isEdit;
   $('custAddr').readOnly = isEdit;
@@ -3332,7 +3410,7 @@ async function loadOrders() {
     tbody.innerHTML = (data.items || []).length ? data.items.map(function (order) {
       const voided = Number(order.is_void) === 1;
       return '<tr class="border-b ' + (voided ? 'bg-gray-100 text-gray-400' : 'hover:bg-blue-50') + '">' +
-        '<td class="border px-2 py-1 text-center">' + (canDo('orderList.batch') ? '<input type="checkbox" class="order-check" value="' + order.id + '"' + (voided ? ' disabled' : '') + ' onclick="updateBatchOrderHint()">' : '') + '</td>' +
+        '<td class="border px-2 py-1 text-center">' + (canShow('orderList.batch') ? '<input type="checkbox" class="order-check" value="' + order.id + '"' + (voided || !canDo('orderList.batch') ? ' disabled' : '') + ' onclick="updateBatchOrderHint()">' : '') + '</td>' +
         '<td class="border px-2 py-1 font-mono">' + esc(order.order_no) + '</td>' +
         '<td class="border px-2 py-1">' + esc(order.bill_date) + '</td>' +
         '<td class="border px-2 py-1 text-gray-500">' + esc(order.created_at) + '</td>' +
@@ -3768,7 +3846,7 @@ let purchaseSpecCache = {};
 
 function newPurchaseRow() {
   return {
-    goods_id: null, pid: '', pname: '', spec: '', unit: '', units: [], baseUnit: '',
+    goods_id: null, pid: '', pname: '', spec: '', unit: '', units: [], baseUnit: '', allowUnitEdit: false,
     qty: 1, price: '', amount: 0, makeDate: '', expDate: '', remark: '',
     shelfLifeDays: 0
   };
@@ -3806,7 +3884,7 @@ function renderPurchaseRows() {
       ? '<td><input type="number" step="0.001" min="0" class="w-full border px-1 py-1" value="' + esc(row.qty) + '" oninput="purchaseRows[' + index + '].qty=this.value;calcPurchaseRow(' + index + ')"' + (canDo('purchase.qty') ? '' : ' readonly') + '></td>'
       : '<td><input type="number" class="w-full border px-1 py-1 bg-gray-100 text-gray-500" value="1" disabled title="加权模式不记进货数量，利润按销量核算"></td>';
     return '<tr class="border-b">' +
-      '<td class="text-center"><button onclick="delPurchaseRow(' + index + ')" class="' + (canDo('purchase.delRow') ? 'text-red-500' : 'hidden') + ' text-lg leading-none">－</button></td>' +
+      '<td class="text-center"><button onclick="delPurchaseRow(' + index + ')" class="' + permButtonClass(['purchase.delRow'], 'text-red-500') + ' text-lg leading-none"' + permButtonDisabled(['purchase.delRow']) + '>－</button></td>' +
       '<td><input class="w-full border px-1 py-1" value="' + esc(row.pid) + '" placeholder="编码" oninput="purchaseRows[' + index + '].pid=this.value" onchange="onPurchasePidChange(' + index + ')" onkeydown="if(event.key===\'Enter\'){this.blur();}"></td>' +
       '<td class="relative purchase-name-cell"><input class="w-full border px-1 py-1" value="' + esc(row.pname) + '" placeholder="品名（可模糊检索）" oninput="onPurchaseNameInput(' + index + ', this.value)" onfocus="onPurchaseNameFocus(' + index + ')" onkeydown="onPurchaseNameKeydown(event,' + index + ')"><div class="purchase-name-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
       '<td class="relative purchase-spec-cell"><div class="flex gap-1"><input class="w-full border px-1 py-1" value="' + esc(displaySpec(row)) + '" placeholder="规格（选或输）" oninput="onPurchaseSpecInput(' + index + ', this.value)" onfocus="openPurchaseSpecSuggest(' + index + ')" onkeydown="onPurchaseSpecKeydown(event,' + index + ')" onblur="onPurchaseSpecBlur(' + index + ', event)"><button type="button" class="border px-1 text-gray-600" onclick="togglePurchaseSpecSuggest(' + index + ')">选</button></div><div class="purchase-spec-suggest hidden fixed z-50 bg-white border shadow max-h-64 overflow-auto text-sm"></div></td>' +
@@ -4137,6 +4215,7 @@ function applyPurchaseGoods(index, item) {
   row.pid = item.code || '';
   row.pname = item.name || row.pname;
   row.spec = item.spec || '';
+  row.allowUnitEdit = !String(item.spec || '').trim();
   row.units = item.units || [];
   row.baseUnit = item.base_unit || item.unit || '';
   row.unit = item.default_purchase_unit || row.baseUnit;
@@ -4451,8 +4530,8 @@ async function loadPurchases() {
       const voided = Number(p.is_void) === 1;
       const canEdit = !voided && stockConfig.mode === 'batch';
       const ops = '<button onclick="event.stopPropagation();openPurchaseDetail(' + p.id + ')" class="text-primaryBlue mr-2">查看</button>' +
-        (canEdit && canDo('purchase.edit') ? '<button onclick="event.stopPropagation();editPurchase(' + p.id + ')" class="text-primaryBlue mr-2">编辑</button>' : '') +
-        (voided || !canDo('purchase.void') ? '' : '<button onclick="event.stopPropagation();voidPurchase(' + p.id + ')" class="text-red-500">作废</button>');
+        (canEdit && canShow('purchase.edit') ? '<button onclick="event.stopPropagation();editPurchase(' + p.id + ')" class="' + (canDo('purchase.edit') ? 'text-primaryBlue' : 'text-gray-500') + ' mr-2">' + (canDo('purchase.edit') ? '编辑' : '查看') + '</button>' : '') +
+        (voided || !canShow('purchase.void') ? '' : '<button onclick="event.stopPropagation();voidPurchase(' + p.id + ')" class="' + permButtonClass(['purchase.void'], 'text-red-500') + '"' + permButtonDisabled(['purchase.void']) + '>作废</button>');
       return '<tr class="border-b cursor-pointer hover:bg-blue-50 ' + (voided ? 'bg-gray-100 text-gray-400' : '') + '" onclick="openPurchaseDetail(' + p.id + ')">' +
         '<td class="border px-2 py-1 font-mono">' + esc(p.purchase_no) + '</td>' +
         '<td class="border px-2 py-1">' + esc(p.bill_date) + '</td>' +
