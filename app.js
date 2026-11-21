@@ -1439,10 +1439,49 @@ function saleUnitPrice(row, unitName) {
   return unitPrice(row, unitName);
 }
 
+const COMMON_UNITS = ['件', '袋', '箱', '瓶', '桶', '包', '罐', '盒', 'kg', 'g', 'L', 'ml', '个', '只', '提'];
+
+function unitSuggestionList(row) {
+  const names = [];
+  (row.units || []).forEach(function (u) {
+    const name = String(u.unit || '').trim();
+    if (name && names.indexOf(name) < 0) names.push(name);
+  });
+  COMMON_UNITS.forEach(function (name) {
+    if (names.indexOf(name) < 0) names.push(name);
+  });
+  return names;
+}
+
+function unitInputHtml(row, index, isPurchase, dis) {
+  const current = String(row.unit || '');
+  const listId = (isPurchase ? 'purchaseUnitSuggest_' : 'saleUnitSuggest_') + index;
+  const commitFn = isPurchase ? 'onPurchaseUnitCommit' : 'onUnitCommit';
+  const enterFn = isPurchase
+    ? 'commitPurchaseSpec(' + index + ')'
+    : 'commitSpecText(' + index + ')';
+  const extra = isPurchase
+    ? '<div class="purchase-base-hint text-[10px] leading-tight text-gray-500 mt-0.5"></div>'
+    : '';
+  const options = unitSuggestionList(row).map(function (name) {
+    return '<option value="' + esc(name) + '"></option>';
+  }).join('');
+  const inputFn = isPurchase
+    ? 'purchaseRows[' + index + '].unit=this.value'
+    : 'sellRows[' + index + '].unit=this.value';
+  return '<input class="w-full min-w-0 border px-1 py-1 text-xs" list="' + listId + '" value="' + esc(current) +
+    '" placeholder="单位（袋/件/kg）" title="未指定规格时必须先填写最小单位；不会默认按“件”记账" ' +
+    'oninput="' + inputFn + '"' +
+    ' onchange="' + commitFn + '(' + index + ',this.value)"' +
+    ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();setTimeout(function(){' + enterFn + ';},0);}"' +
+    (dis || '') +
+    '><datalist id="' + listId + '">' + options + '</datalist>' + extra;
+}
+
 function unitSelectHtml(row, index, dis) {
   const units = row.units || [];
-  if (!units.length) {
-    return '<input class="w-full min-w-0 border px-1 py-1 bg-gray-50 text-xs" value="' + esc(row.unit || '未配置') + '" disabled title="该商品未配置单位，请先在商品资料中补充单位及换算系数">';
+  if (!row.goods_id || !units.length || row.allowUnitEdit) {
+    return unitInputHtml(row, index, false, dis);
   }
   const current = String(row.unit || '');
   const invalid = current && !units.some(function (u) { return u.unit === current; })
@@ -1458,9 +1497,8 @@ function unitSelectHtml(row, index, dis) {
 
 function purchaseUnitSelectHtml(row, index) {
   const units = row.units || [];
-  if (!units.length) {
-    return '<input class="w-full border px-1 py-1 bg-gray-50" value="' + esc(row.unit || '未配置') + '" disabled title="该商品未配置单位，请先在商品资料中补充单位及换算系数">' +
-      '<div class="purchase-base-hint text-[10px] leading-tight text-gray-500 mt-0.5"></div>';
+  if (!row.goods_id || !units.length || row.allowUnitEdit) {
+    return unitInputHtml(row, index, true);
   }
   const current = String(row.unit || '');
   const invalid = current && !units.some(function (u) { return u.unit === current; })
@@ -1631,6 +1669,9 @@ function onPnameInput(index, value) {
     row.stock_id = null;
     row.spec = '';
     row.unit = '';
+    row.units = [];
+    row.baseUnit = '';
+    row.allowUnitEdit = true;
     row.packageQty = 1;
     row.packageUnit = '';
     row.saleUnit = '';
@@ -1648,8 +1689,7 @@ function onPnameInput(index, value) {
         if (specInput) specInput.value = '';
       }
       if (tr.cells[4]) {
-        const unitInput = tr.cells[4].querySelector('input');
-        if (unitInput) unitInput.value = '';
+        tr.cells[4].innerHTML = unitSelectHtml(row, index, isOrderLocked() ? ' disabled' : '');
       }
     }
     updatePriceCell(index);
@@ -2016,7 +2056,7 @@ function renderSpecSuggest(index) {
   if (!items.length) {
     box.innerHTML = '<div class="px-2 py-2 text-gray-500">' + (kw
       ? '没有匹配的规格。按回车或离开输入框，将按“' + esc(row.pname) + ' / ' + esc(row.spec) + '”新建规格并自动生成编码。'
-      : '该品名暂无规格。直接输入新规格（如 500g*12），回车或离开输入框后自动生成编码。') + '</div>';
+      : '该品名暂无规格。可输入新规格（如 500g*12）；若确实无规格，先在“单位”填好最小单位，再直接回车按“无规格”建档。') + '</div>';
     box.classList.remove('hidden');
     return;
   }
@@ -2048,12 +2088,18 @@ function onSpecInput(index, value) {
     row.pid = '';
     row.stock_id = null;
     row.unit = '';
+    row.units = [];
+    row.baseUnit = '';
+    row.allowUnitEdit = true;
     row.history = [];
     row.defaultPrice = null;
     row.price = '';
     row.priceAuto = false;
     setCellValue(index, 1, '');
-    setCellValue(index, 4, '');
+    const tr = $('sellTableBody').rows[index];
+    if (tr && tr.cells[4]) {
+      tr.cells[4].innerHTML = unitSelectHtml(row, index, isOrderLocked() ? ' disabled' : '');
+    }
     updatePriceCell(index);
     calcRowAmount(index);
   }
@@ -2201,7 +2247,18 @@ function commitSpecText(index) {
     toast('请先输入并选择品名', 'err');
     return;
   }
-  if (!name || !spec) return;
+  if (!name) return;
+  if (!spec) {
+    if (row.goods_id) return;
+    if (!String(row.unit || '').trim()) {
+      toast('没有规格的新品，请先在“单位”里填写最小单位，如袋、件、kg', 'err');
+      const unitInput = cellInput(index, 4);
+      if (unitInput) { unitInput.focus(); unitInput.select && unitInput.select(); }
+      return;
+    }
+    createSpec(index, '');
+    return;
+  }
   if (row.goods_id && String(row.spec).trim() === spec) return;
   const matched = (row.specOptions || []).find(function (item) {
     return String(item.spec || '').trim().toLowerCase() === spec.toLowerCase();
@@ -2218,7 +2275,13 @@ async function createSpec(index, specText) {
   if (!row || row.specBusy) return;
   const name = String(row.pname || '').trim();
   const spec = String(specText || '').trim();
-  if (!name || !spec) return;
+  if (!name) return;
+  if (!spec && !String(row.unit || '').trim()) {
+    toast('没有规格的新品，请先填写最小单位，如袋、件、kg', 'err');
+    const unitInput = cellInput(index, 4);
+    if (unitInput) { unitInput.focus(); unitInput.select && unitInput.select(); }
+    return;
+  }
   row.specBusy = true;
   try {
     const data = await api('/goods/spec', {
@@ -2234,9 +2297,10 @@ async function createSpec(index, specText) {
     clearSpecCache(name);
     const goods = data.goods || {};
     const priceInfo = data.price || null;
+    const label = goods.spec ? goods.name + ' / ' + goods.spec : goods.name + '（无规格）';
     toast(data.created
-      ? ('新规格“' + goods.name + ' / ' + goods.spec + '”已建档，自动编码 ' + goods.code)
-      : ('使用已有规格，编码 ' + goods.code), 'ok');
+      ? ('新品“' + label + '”已建档，自动编码 ' + goods.code)
+      : ('使用已有商品，编码 ' + goods.code), 'ok');
     if (sellRows[index] !== row) return;
     applySpecToRow(index, {
       goods_id: goods.id,
@@ -4095,11 +4159,15 @@ function onPurchaseNameInput(index, value) {
     row.pid = '';
     row.spec = '';
     row.unit = '';
+    row.units = [];
+    row.baseUnit = '';
+    row.allowUnitEdit = true;
     row.price = '';
     row.specOptions = [];
     setPurchaseCell(index, 1, '');
     setPurchaseCell(index, 3, '');
-    setPurchaseCell(index, 4, '');
+    const tr = $('purchaseTableBody').rows[index];
+    if (tr && tr.cells[4]) tr.cells[4].innerHTML = purchaseUnitSelectHtml(row, index);
     setPurchaseCell(index, 6, '');
     calcPurchaseRow(index);
   }
@@ -4285,7 +4353,7 @@ function renderPurchaseSpecSuggest(index) {
   positionSuggestBox(box, input, 240);
   const items = purchaseSpecState.items || [];
   if (!items.length) {
-    box.innerHTML = '<div class="px-2 py-3 text-gray-400">该品名暂无规格，键入新规格后回车自动建档</div>';
+    box.innerHTML = '<div class="px-2 py-3 text-gray-400">该品名暂无规格。可键入新规格；若确实无规格，先在“单位”填好最小单位再回车建档。</div>';
     box.classList.remove('hidden');
     return;
   }
@@ -4323,8 +4391,12 @@ function onPurchaseSpecInput(index, value) {
     row.goods_id = null;
     row.pid = '';
     row.unit = '';
+    row.units = [];
+    row.baseUnit = '';
+    row.allowUnitEdit = true;
     setPurchaseCell(index, 1, '');
-    setPurchaseCell(index, 4, '');
+    const tr = $('purchaseTableBody').rows[index];
+    if (tr && tr.cells[4]) tr.cells[4].innerHTML = purchaseUnitSelectHtml(row, index);
   }
   if (purchaseSpecState.index === index) renderPurchaseSpecSuggest(index);
 }
@@ -4454,7 +4526,20 @@ function commitPurchaseSpec(index) {
   if (row.specBusy) return row.specPromise || Promise.resolve();
   const name = String(row.pname || '').trim();
   const spec = String(row.spec || '').trim();
-  if (!name || !spec) return Promise.resolve();
+  if (!name) return Promise.resolve();
+  if (!spec) {
+    if (row.goods_id) return Promise.resolve();
+    if (!String(row.unit || '').trim()) {
+      toast('没有规格的新品，请先在“单位”里填写最小单位，如袋、件、kg', 'err');
+      const tr = $('purchaseTableBody') && $('purchaseTableBody').rows[index];
+      const unitInput = tr && tr.cells[4] ? tr.cells[4].querySelector('input') : null;
+      if (unitInput) { unitInput.focus(); unitInput.select && unitInput.select(); }
+      return Promise.resolve();
+    }
+    const emptySpecPromise = createPurchaseSpec(index, '');
+    row.specPromise = emptySpecPromise;
+    return emptySpecPromise;
+  }
   if (row.goods_id && String(row.spec).trim() === spec) return Promise.resolve();
   const matched = (row.specOptions || []).find(function (item) {
     return String(item.spec || '').trim().toLowerCase() === spec.toLowerCase();
@@ -4472,7 +4557,7 @@ function commitPurchaseSpec(index) {
 async function flushPurchaseSpecs() {
   const tasks = purchaseRows.map(function (row, index) {
     if (!row.pname || !String(row.pname).trim()) return null;
-    if (!row.spec || !String(row.spec).trim()) return null;
+    if (row.goods_id && (!row.spec || !String(row.spec).trim())) return null;
     if (row.goods_id) return null;
     return commitPurchaseSpec(index);
   }).filter(Boolean);
@@ -4484,7 +4569,11 @@ async function createPurchaseSpec(index, specText) {
   if (!row || row.specBusy) return;
   const name = String(row.pname || '').trim();
   const spec = String(specText || '').trim();
-  if (!name || !spec) return;
+  if (!name) return;
+  if (!spec && !String(row.unit || '').trim()) {
+    toast('没有规格的新品，请先填写最小单位，如袋、件、kg', 'err');
+    return;
+  }
   row.specBusy = true;
   try {
     const data = await api('/goods/spec', {
@@ -4494,9 +4583,10 @@ async function createPurchaseSpec(index, specText) {
     delete purchaseSpecCache[purchaseSpecKey(name)];
     clearSpecCache(name);
     const goods = data.goods || {};
+    const label = goods.spec ? goods.name + ' / ' + goods.spec : goods.name + '（无规格）';
     toast(data.created
-      ? ('新规格“' + goods.name + ' / ' + goods.spec + '”已建档，自动编码 ' + goods.code)
-      : ('使用已有规格，编码 ' + goods.code), 'ok');
+      ? ('新品“' + label + '”已建档，自动编码 ' + goods.code)
+      : ('使用已有商品，编码 ' + goods.code), 'ok');
     if (purchaseRows[index] !== row) return;
     applyPurchaseGoods(index, {
       goods_id: goods.id,
