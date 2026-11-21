@@ -2084,10 +2084,11 @@ function renderSpecSuggest(index) {
     const priceText = item.price !== null && item.price !== undefined
       ? '客户价 ￥' + money(item.price)
       : (item.default_price !== null && item.default_price !== undefined ? '参考 ￥' + money(item.default_price) : '无价格记忆');
+    const unitLabel = item.unit || (item.unit_placeholder ? '未设单位' : '');
     return '<div class="spec-suggest-item px-2 py-1.5 border-b cursor-pointer hover:bg-blue-50 ' +
       (i === specSuggest.active ? 'bg-blue-100' : '') + '" data-spec="' + esc(item.spec) + '">' +
       '<span class="font-medium">' + esc(item.spec || '（无规格）') + '</span>' +
-      '<span class="text-gray-400 ml-2">' + esc(item.unit || '') + '</span>' +
+      '<span class="text-gray-400 ml-2">' + esc(unitLabel) + '</span>' +
       '<span class="text-gray-500 ml-2 font-mono">' + esc(item.code) + '</span>' +
       '<span class="text-primaryBlue ml-2">' + esc(priceText) + '</span></div>';
   }).join('') + '<div class="px-2 py-1 text-gray-400 border-t">直接输入新规格后回车建档；不填规格、填好单位后回车，按“无规格”建档</div>';
@@ -3497,6 +3498,31 @@ async function voidCurrentOrder() {
 }
 
 
+async function adoptLegacyBaseUnit(row, rowNo, isPurchase) {
+  if (!row || !row.goods_id) return true;
+  if (String(row.spec || '').trim()) return false;
+  const expected = String(row.unit || '').trim();
+  if (!expected) return true;
+  const configured = (row.units || []).some(function (u) { return String(u.unit || '') === expected; });
+  if (configured) return true;
+  try {
+    const result = await api('/goods/' + encodeURIComponent(row.goods_id) + '/replace-base-unit', {
+      method: 'POST',
+      body: { unit: expected }
+    });
+    const goods = result.goods || {};
+    row.units = goods.units || [];
+    row.baseUnit = goods.base_unit || expected;
+    if (result.replaced) {
+      toast('第 ' + rowNo + ' 行旧档案单位已由“' + result.from_unit + '”改为“' + result.to_unit + '”，可正常记账', 'ok');
+    }
+    return true;
+  } catch (err) {
+    toast('第 ' + rowNo + ' 行' + (err.message || '单位无法替换'), 'err');
+    return false;
+  }
+}
+
 async function saveSellOrder(opts) {
   opts = opts || {};
   const keepPage = !!opts.keepPage;
@@ -3522,7 +3548,11 @@ async function saveSellOrder(opts) {
     if (!String(row.unit || '').trim()) {
       return toast('第 ' + (sellRows.indexOf(row) + 1) + ' 行必须选择单位', 'err');
     }
-    if ((row.units || []).length && !(row.units || []).some(function (u) { return u.unit === row.unit; })) {
+    const configured = (row.units || []).some(function (u) { return u.unit === row.unit; });
+    if (!configured && row.goods_id && !String(row.spec || '').trim()) {
+      const adopted = await adoptLegacyBaseUnit(row, sellRows.indexOf(row) + 1, false);
+      if (!adopted) return;
+    } else if (!configured && (row.units || []).length) {
       return toast('第 ' + (sellRows.indexOf(row) + 1) + ' 行单位「' + row.unit + '」未在商品资料中配置，不能按 1:1 记账；请先设置换算或改选已配置单位', 'err');
     }
   }
@@ -4422,7 +4452,7 @@ function renderPurchaseSpecSuggest(index) {
     return '<div class="purchase-spec-suggest-item px-2 py-1.5 border-b cursor-pointer hover:bg-blue-50 ' +
       (i === purchaseSpecState.active ? 'bg-blue-100' : '') + '" data-spec="' + esc(s.spec) + '">' +
       '<span class="font-medium">' + esc(s.spec || '（无规格）') + '</span>' +
-      '<span class="text-gray-400 ml-2">' + esc(s.unit || '') + '</span>' +
+      '<span class="text-gray-400 ml-2">' + esc(s.unit || (s.unit_placeholder ? '未设单位' : '')) + '</span>' +
       '<span class="text-gray-300 ml-2 font-mono">' + esc(s.code || '') + '</span>' +
       '<button type="button" class="purchase-history-btn ml-2 text-primaryBlue text-xs underline" data-history-id="' + Number(s.goods_id) + '" data-history-name="' + esc((s.name || '') + (s.spec ? ' / ' + s.spec : '')) + '">进货记录</button>' +
       '</div>';
@@ -4756,7 +4786,11 @@ async function savePurchase() {
     if (!String(row.unit || '').trim()) {
       return toast('第 ' + rowNo + ' 行必须选择单位', 'err');
     }
-    if ((row.units || []).length && !(row.units || []).some(function (u) { return u.unit === row.unit; })) {
+    const configured = (row.units || []).some(function (u) { return u.unit === row.unit; });
+    if (!configured && row.goods_id && !String(row.spec || '').trim()) {
+      const adopted = await adoptLegacyBaseUnit(row, rowNo, true);
+      if (!adopted) return;
+    } else if (!configured && (row.units || []).length) {
       return toast('第 ' + rowNo + ' 行单位「' + row.unit + '」未在商品资料中配置，不能按 1:1 记账；请先设置换算或改选已配置单位', 'err');
     }
   }
