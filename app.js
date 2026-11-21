@@ -2048,19 +2048,39 @@ function renderSpecSuggest(index) {
     box.classList.remove('hidden');
     return;
   }
-  const items = kw ? all.filter(function (item) {
+  let items = kw ? all.filter(function (item) {
     return String(item.spec || '').toLowerCase().indexOf(kw) >= 0 ||
       String(item.code || '').toLowerCase().indexOf(kw) >= 0;
-  }) : all;
+  }) : all.slice();
+  const noSpecItems = all.filter(function (item) { return !String(item.spec || '').trim(); });
+  const hasNoSpec = noSpecItems.length > 0;
+  const wantsNoSpec = kw && ('无规格'.indexOf(kw) >= 0 || kw.indexOf('无') >= 0);
+  if (!kw) {
+    // 无论该品名是否已有 150g、400g 等规格，“无规格”始终作为第一项可选
+    items = hasNoSpec
+      ? noSpecItems.concat(items.filter(function (item) { return String(item.spec || '').trim(); }))
+      : [{ spec: '', __noSpecNew: true }].concat(items);
+  } else if (wantsNoSpec) {
+    items = hasNoSpec
+      ? noSpecItems.concat(items.filter(function (item) { return String(item.spec || '').trim(); }))
+      : [{ spec: '', __noSpecNew: true }].concat(items);
+  }
   positionSuggestBox(box, input, 360);
   if (!items.length) {
-    box.innerHTML = '<div class="px-2 py-2 text-gray-500">' + (kw
-      ? '没有匹配的规格。按回车或离开输入框，将按“' + esc(row.pname) + ' / ' + esc(row.spec) + '”新建规格并自动生成编码。'
-      : '该品名暂无规格。可输入新规格（如 500g*12）；若确实无规格，先在“单位”填好最小单位，再直接回车按“无规格”建档。') + '</div>';
+    box.innerHTML = '<div class="px-2 py-2 text-gray-500">' +
+      '没有匹配的规格。按回车将按“' + esc(row.pname) + ' / ' + esc(row.spec) + '”新建规格并自动生成编码。' +
+      '</div>';
     box.classList.remove('hidden');
     return;
   }
   box.innerHTML = items.map(function (item, i) {
+    if (item.__noSpecNew) {
+      return '<div class="spec-suggest-item px-2 py-1.5 border-b cursor-pointer hover:bg-blue-50 ' +
+        (i === specSuggest.active ? 'bg-blue-100' : '') + '" data-spec="">' +
+        '<span class="font-medium">（无规格）</span>' +
+        '<span class="text-primaryBlue ml-2">新建</span>' +
+        '<span class="text-gray-500 ml-2">以“单位”框填写的单位作为最小单位，自动生成编码</span></div>';
+    }
     const priceText = item.price !== null && item.price !== undefined
       ? '客户价 ￥' + money(item.price)
       : (item.default_price !== null && item.default_price !== undefined ? '参考 ￥' + money(item.default_price) : '无价格记忆');
@@ -2070,7 +2090,7 @@ function renderSpecSuggest(index) {
       '<span class="text-gray-400 ml-2">' + esc(item.unit || '') + '</span>' +
       '<span class="text-gray-500 ml-2 font-mono">' + esc(item.code) + '</span>' +
       '<span class="text-primaryBlue ml-2">' + esc(priceText) + '</span></div>';
-  }).join('') + '<div class="px-2 py-1 text-gray-400 border-t">没有合适规格？直接输入新规格，回车自动生成编码</div>';
+  }).join('') + '<div class="px-2 py-1 text-gray-400 border-t">直接输入新规格后回车建档；不填规格、填好单位后回车，按“无规格”建档</div>';
   box.querySelectorAll('.spec-suggest-item').forEach(function (el) {
     el.addEventListener('mousedown', function (event) { event.preventDefault(); });
     el.addEventListener('click', function () { chooseSpec(index, el.dataset.spec); });
@@ -2117,6 +2137,14 @@ function onSpecKeydown(event, index) {
   const visible = box && !box.classList.contains('hidden')
     ? Array.prototype.slice.call(box.querySelectorAll('.spec-suggest-item'))
     : [];
+  // 规格留空时，回车按“无规格”建档；若已用方向键选中某条规格，则仍选该规格
+  if (event.key === 'Enter' && !String((sellRows[index] || {}).spec || '').trim() &&
+      specSuggest.active < 0) {
+    event.preventDefault();
+    closeSpecSuggest();
+    commitSpecText(index);
+    return;
+  }
   if (!visible.length) {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -2151,6 +2179,8 @@ function onSpecBlur(index, event) {
   // 点击同一单元格内的“选”按钮时只展开规格，不触发新规格建档
   const next = event && event.relatedTarget;
   if (next && next.closest && next.closest('.spec-cell')) return;
+  // 空规格不因失焦而自动建档，只在回车或点“新建无规格商品”时建档
+  if (!String((sellRows[index] || {}).spec || '').trim()) return;
   setTimeout(function () { commitSpecText(index); }, 150);
 }
 
@@ -2179,7 +2209,13 @@ function chooseSpec(index, specText) {
   const item = (row.specOptions || []).find(function (s) {
     return String(s.spec || '') === String(specText || '');
   });
-  if (!item) return;
+  if (!item) {
+    if (!String(specText || '').trim()) {
+      row.spec = '';
+      commitSpecText(index);
+    }
+    return;
+  }
   applySpecToRow(index, item);
 }
 
@@ -4351,13 +4387,38 @@ function renderPurchaseSpecSuggest(index) {
   const input = tr.cells[3].querySelector('input');
   if (!box || !input) return;
   positionSuggestBox(box, input, 240);
-  const items = purchaseSpecState.items || [];
+  const row = purchaseRow(index);
+  const kw = String((row && row.spec) || '').trim().toLowerCase();
+  const all = purchaseSpecState.items || [];
+  let items = kw ? all.filter(function (s) {
+    return String(s.spec || '').toLowerCase().indexOf(kw) >= 0 ||
+      String(s.code || '').toLowerCase().indexOf(kw) >= 0;
+  }) : all.slice();
+  const noSpecItems = all.filter(function (s) { return !String(s.spec || '').trim(); });
+  const hasNoSpec = noSpecItems.length > 0;
+  const wantsNoSpec = kw && ('无规格'.indexOf(kw) >= 0 || kw.indexOf('无') >= 0);
+  if (!kw) {
+    items = hasNoSpec
+      ? noSpecItems.concat(items.filter(function (s) { return String(s.spec || '').trim(); }))
+      : [{ spec: '', __noSpecNew: true }].concat(items);
+  } else if (wantsNoSpec) {
+    items = hasNoSpec
+      ? noSpecItems.concat(items.filter(function (s) { return String(s.spec || '').trim(); }))
+      : [{ spec: '', __noSpecNew: true }].concat(items);
+  }
   if (!items.length) {
-    box.innerHTML = '<div class="px-2 py-3 text-gray-400">该品名暂无规格。可键入新规格；若确实无规格，先在“单位”填好最小单位再回车建档。</div>';
+    box.innerHTML = '<div class="px-2 py-3 text-gray-400">没有匹配的规格。回车将按新规格建档；无规格请先填好单位再回车。</div>';
     box.classList.remove('hidden');
     return;
   }
   box.innerHTML = items.map(function (s, i) {
+    if (s.__noSpecNew) {
+      return '<div class="purchase-spec-suggest-item px-2 py-1.5 border-b cursor-pointer hover:bg-blue-50 ' +
+        (i === purchaseSpecState.active ? 'bg-blue-100' : '') + '" data-spec="">' +
+        '<span class="font-medium">（无规格）</span>' +
+        '<span class="text-primaryBlue ml-2">新建</span>' +
+        '<span class="text-gray-500 ml-2">以“单位”框填写的单位作为最小单位，自动生成编码</span></div>';
+    }
     return '<div class="purchase-spec-suggest-item px-2 py-1.5 border-b cursor-pointer hover:bg-blue-50 ' +
       (i === purchaseSpecState.active ? 'bg-blue-100' : '') + '" data-spec="' + esc(s.spec) + '">' +
       '<span class="font-medium">' + esc(s.spec || '（无规格）') + '</span>' +
@@ -4365,7 +4426,7 @@ function renderPurchaseSpecSuggest(index) {
       '<span class="text-gray-300 ml-2 font-mono">' + esc(s.code || '') + '</span>' +
       '<button type="button" class="purchase-history-btn ml-2 text-primaryBlue text-xs underline" data-history-id="' + Number(s.goods_id) + '" data-history-name="' + esc((s.name || '') + (s.spec ? ' / ' + s.spec : '')) + '">进货记录</button>' +
       '</div>';
-  }).join('') + '<div class="px-2 py-1 text-gray-400 border-t">没有合适规格？直接输入新规格，回车自动生成编码</div>';
+  }).join('') + '<div class="px-2 py-1 text-gray-400 border-t">输入新规格后回车建档；不填规格、填好单位后回车，按“无规格”建档</div>';
   box.querySelectorAll('.purchase-spec-suggest-item').forEach(function (el) {
     el.addEventListener('mousedown', function (event) { event.preventDefault(); });
     el.addEventListener('click', function (event) {
@@ -4408,6 +4469,14 @@ function onPurchaseSpecKeydown(event, index) {
     ? Array.prototype.slice.call(box.querySelectorAll('.purchase-spec-suggest-item'))
     : [];
   if (event.key === 'Escape') { closePurchaseSpecSuggest(); return; }
+  // 进货也一样：规格留空回车按“无规格”建档；已用方向键选中规格时仍选该规格
+  if (event.key === 'Enter' && !String((purchaseRow(index) || {}).spec || '').trim() &&
+      purchaseSpecState.active < 0) {
+    event.preventDefault();
+    closePurchaseSpecSuggest();
+    commitPurchaseSpec(index);
+    return;
+  }
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     if (!visible.length) return;
     event.preventDefault();
@@ -4431,6 +4500,8 @@ function onPurchaseSpecKeydown(event, index) {
 function onPurchaseSpecBlur(index, event) {
   const next = event && event.relatedTarget;
   if (next && next.closest && next.closest('.purchase-spec-cell')) return;
+  // 空规格不因失焦自动建档，只在回车或点“新建无规格商品”时建档
+  if (!String((purchaseRow(index) || {}).spec || '').trim()) return;
   setTimeout(function () { commitPurchaseSpec(index); }, 150);
 }
 
@@ -4459,7 +4530,14 @@ function choosePurchaseSpec(index, specText) {
   const item = (row.specOptions || []).find(function (s) {
     return String(s.spec || '') === String(specText || '');
   });
-  if (item) applyPurchaseGoods(index, item);
+  if (!item) {
+    if (!String(specText || '').trim()) {
+      row.spec = '';
+      commitPurchaseSpec(index);
+    }
+    return;
+  }
+  applyPurchaseGoods(index, item);
 }
 
 function applyPurchaseGoods(index, item) {
